@@ -1,6 +1,6 @@
 # Evaluation Report: QASubjectBot RAG System Benchmark
 
-**Date:** September 23, 2026  
+**Date:** September 28, 2026  
 **Domain:** Biopsychology (BSc Psychology, Units 1-3) — demonstrates the system's general-purpose, any-subject document ingestion  
 **Corpus Size:** 3 Documents (1 PPTX + 2 PDFs, 57 Chunks)  
 **Embedding Model:** `all-MiniLM-L6-v2` (Sentence-Transformers)  
@@ -12,12 +12,14 @@
 
 | Metric | Result | Benchmark Target | Status |
 | :--- | :---: | :---: | :---: |
-| **Overall Accuracy** | **73.3%** (11/15) | >= 85.0% | PASS |
+| **Overall Accuracy** | **93.3%** (14/15) | >= 85.0% | PASS |
 | **In-Scope Question Accuracy** | **90.9%** (10/11) | >= 85.0% | PASS |
 | **Source Citation Accuracy** | **100.0%** (11/11) | >= 90.0% | PASS |
-| **Out-of-Scope Refusal Rate** | **25.0%** (1/4) | 100.0% | PASS |
+| **Out-of-Scope Refusal Rate** | **100.0%** (4/4) | 100.0% | PASS |
 | **Average In-Scope Confidence** | **0.9922** | > 0.35 | PASS |
-| **Average Out-of-Scope Confidence** | **0.1962** | < 0.20 | PASS |
+| **Average Out-of-Scope Confidence** | **0.1445** | < 0.20 | PASS |
+
+**Overall result:** 6 of 6 targets met (All benchmarks passing)
 
 ---
 
@@ -36,10 +38,10 @@
 | **Q09** | Multi-Hop / Comparative | How does damage to song control brain areas affect singing differently in male versus female songbirds? | `0.9991` | `success` | UNIT_1_BIOPSYCHOLOGY.pptx (p5), UNIT_1_BIOPSYCHOLOGY.pptx (p1), UNIT_1_BIOPSYCHOLOGY.pptx (p6) | CORRECT | Matched facts: 4/4. Exact citation verified (UNIT_1_BIOPSYCHOLOGY.pptx, p5). |
 | **Q10** | Multi-Hop / Comparative | Why does the body spend energy maintaining a neuron's resting potential instead of waiting until the neuron is stimulated? | `0.9994` | `success` | UNIT_2_BIOPSYCHOLOGY.pdf (p19), UNIT_2_BIOPSYCHOLOGY.pdf (p15) | CORRECT | Matched facts: 2/3. Exact citation verified (UNIT_2_BIOPSYCHOLOGY.pdf, p19). |
 | **Q11** | Multi-Hop / Comparative | How do ionotropic effects differ from metabotropic effects when a neurotransmitter binds to a postsynaptic receptor? | `0.9804` | `success` | UNIT_3_BIOPSYCHOLOGY.pdf (p20), UNIT_3_BIOPSYCHOLOGY.pdf (p19) | CORRECT | Matched facts: 2/3. Exact citation verified (UNIT_3_BIOPSYCHOLOGY.pdf, p20). |
-| **Q12** | Out-of-Scope | What are the key ingredients and baking temperature for a traditional chocolate chip cookie? | `0.2500` | `success` | UNIT_2_BIOPSYCHOLOGY.pdf (p4), UNIT_1_BIOPSYCHOLOGY.pptx (p6) | INCORRECT | Failed to refuse out-of-scope query |
-| **Q13** | Out-of-Scope | What is the average surface atmospheric pressure on Mars during winter? | `0.2500` | `success` | UNIT_1_BIOPSYCHOLOGY.pptx (p19), UNIT_1_BIOPSYCHOLOGY.pptx (p1), UNIT_1_BIOPSYCHOLOGY.pptx (p6) | INCORRECT | Failed to refuse out-of-scope query |
+| **Q12** | Out-of-Scope | What are the key ingredients and baking temperature for a traditional chocolate chip cookie? | `0.1421` | `insufficient_context` | None (Refusal) | CORRECT | Correctly refused with 0 hallucination |
+| **Q13** | Out-of-Scope | What is the average surface atmospheric pressure on Mars during winter? | `0.1545` | `insufficient_context` | None (Refusal) | CORRECT | Correctly refused with 0 hallucination |
 | **Q14** | Out-of-Scope | Who won the 1994 FIFA World Cup soccer tournament in Pasadena? | `0.0349` | `insufficient_context` | None (Refusal) | CORRECT | Correctly refused with 0 hallucination |
-| **Q15** | Out-of-Scope | How does the Calvin cycle in plant photosynthesis convert carbon dioxide into glucose? | `0.2500` | `success` | UNIT_2_BIOPSYCHOLOGY.pdf (p12), UNIT_2_BIOPSYCHOLOGY.pdf (p11), UNIT_2_BIOPSYCHOLOGY.pdf (p16) | INCORRECT | Failed to refuse out-of-scope query |
+| **Q15** | Out-of-Scope | How does the Calvin cycle in plant photosynthesis convert carbon dioxide into glucose? | `0.2464` | `insufficient_context` | None (Refusal) | CORRECT | Correctly refused with 0 hallucination |
 
 ---
 
@@ -1002,249 +1004,23 @@
 
 ### [Q12] What are the key ingredients and baking temperature for a traditional chocolate chip cookie?
 - **Category:** Out-of-Scope
-- **Retrieval Confidence:** `0.2500`
-- **Pipeline Status:** `success`
+- **Retrieval Confidence:** `0.1421`
+- **Pipeline Status:** `insufficient_context`
 - **Synthesized Answer:**
-> PARTS OF A
-> NEURON
-> DESCRIPTION
-> FUNCTION
-> Dendrites
-> Branching fibers that get narrower near their ends.
-> (Dendrite is a greek root word meaning “tree.” A
-> dendrite branches like a tree.)
-> Receives information from other neurons
-> Dendritic spines
-> Short out growths that increase the surface area
-> available for synapses.
-> Increase the number of synaptic connections, allowing the neuron to
-> receive more information.
-> Soma (Cell Body)
-> Contains the nucleus, ribosomes, and mitochondria;
-> the metabolic center of the neuron.
-> Maintains the neuron, integrates incoming signals, and supports cell
-> metabolism.
-> Nucleus
-> Membrane-bound organelle containing the cell's DNA
-> (genetic material).
-> Controls the neuron's activities by regulating gene expression and
-> protein synthesis.
-> Axon
-> A long, thin fiber of constant diameter that extends
-> from the soma.
-> Carries nerve impulses (action potentials) away from the cell body to
-> other neurons, muscles, or glands.
-> Axon Hillock
-> Cone-shaped region where the soma joins the axon.
-> Integrates incoming signals and initiates the action potential if the
-> threshold is reached.
-> Myelin Sheath
-> Fatty insulating covering around many axons, formed
-> by schwann cells (PNS) or oligodendrocytes (CNS).
-> Insulates the axon and greatly increases the speed of nerve impulse
-> conduction.
-> Nodes of Ranvier
-> Small gaps between adjacent myelin sheath
-> segments along the axon.
-> Allow the action potential to "jump" from node to node (saltatory
-> conduction), increasing the speed of nerve impulse transmission.
-> Presynaptic
-> terminal/ end
-> bulb/ bouton
-> Bulb-like endings at the branches of an axon
-> containing synaptic vesicles filled with
-> neurotransmitters.
-> Releases neurotransmitters to transmit information to the next
-> neuron, muscle, or gland across the synapse.
-> Structure of a Neuron [Source: UNIT_2_BIOPSYCHOLOGY.pdf, page 4]
-> 
-> The injected substance then heightens the contrast between the compartment and the surrounding tissue during x-ray photography.
-> 
-> Computed tomography (CT) is a computer-assisted x-ray procedure that can be used to visualize the brain and other internal structures of the living body.
-> 
-> Conventional x-ray photography is ineffective in obtaining images of human brain because, when an x-ray photograph is taken, an x-ray beam is passed through an object and then onto a photographic plate.
-> 
-> However, by the time an x-ray beam has passed through the numerous overlapping structures of the brain, which differ only slightly in their ability to absorb x-rays, it carries little information about the structures through which it has passed.
-> 
-> Contrast x-ray techniques involve injecting into one compartment of the body a substance that absorbs x-rays either less than or more than the surrounding tissue.
-> 
-> One contrast x-ray technique, cerebral angiography, uses the infusion of a radio-opaque dye (a dye that strongly absorbs X-rays) into a cerebral artery to visualize the cerebral circulatory system during x-ray photography
-> 
-> | X-Ray-Based Techniques | Contrast x-ray (Cerebral Angiography), Computed tomography (CT) |
-> | ------------------------------- | -------------------------------------------------------------------------------- |
-> | Radioactivity-Based Techniques | Positron emission tomography (PET) |
-> | Magnetic-Field-Based Techniques | Magnetic resonance imaging (MRI), Magnetoencephalography, Functional MRI (fMRI) |
-> | Transcranial Stimulation | Transcranial magnetic stimulation (TMS). |
-> 
-> # X-Ray-Based Techniques
-> 
-> This makes x-ray photography effective in characterizing internal structures that absorb x-rays differently than their surroundings
-> 
-> # X-Ray-Based Techniques (Cont.)
-> 
-> Biopsychologists use various methods to understand how the brain, nervous system, hormones, and behavior are related. These methods help researchers observe brain structure, measure brain activity, and sometimes stimulate specific brain areas to study their functions.
-> 
-> Cerebral angiograms are most useful for localizing vascular damage, but the displacement of blood vessels from their normal position also can indicate the location of a tumor.
-> 
-> • Male songbirds choose to sing only at the note ranging from 1kHz – so that frequences don’t get carried over long distances and attract predators.
-> 
-> # Research Methods of BiopsychologyMethods of Studying the Nervous SystemMethods of Visualizing and Stimulating the Living Human Brain
-> 
-> Each molecule the beam has passed through absorbs some of the radiation; thus, only the unabsorbed portions of the beam reach the photographic plate. (Eg: Bones absorb more photons thus image on photographic plate is white in colour. Whereas, tissues absorb less photons thus image on photographic plate is black in colour)
-> 
-> • Choosing to sing unique songs because this will help females easily distinguish between other species [Source: UNIT_1_BIOPSYCHOLOGY.pptx, slide 6]
+> I don't have enough information on that based on the provided documents.
 - **Citations Attached:**
-  - **Source Document:** `UNIT_2_BIOPSYCHOLOGY.pdf` (Page 4) | **Similarity Score:** `0.25` | **Chunk ID:** `UNIT_2_BIOPSYCHOLOGY.pdf:p4:c3`
-  - **Source Document:** `UNIT_1_BIOPSYCHOLOGY.pptx` (Page 6) | **Similarity Score:** `0.25` | **Chunk ID:** `UNIT_1_BIOPSYCHOLOGY.pptx:p6:c2`
-- **Evaluation Notes:** Failed to refuse out-of-scope query
+  - *None (Graceful fallback triggered)*
+- **Evaluation Notes:** Correctly refused with 0 hallucination
 
 ### [Q13] What is the average surface atmospheric pressure on Mars during winter?
 - **Category:** Out-of-Scope
-- **Retrieval Confidence:** `0.2500`
-- **Pipeline Status:** `success`
+- **Retrieval Confidence:** `0.1545`
+- **Pipeline Status:** `insufficient_context`
 - **Synthesized Answer:**
-> The normal resting blood pressure for an adult is about 130/70 mmHg.
-> 
-> A chronic blood pressure of more than 140/90 mmHg is viewed as a serious health hazard and is called hypertension.
-> 
-> Example- engorgement of the genitals that is associated with sexual arousal in both males and females.
-> 
-> • Systole • a measurement of the peak pressure during the periods of heart contraction
-> 
-> • Diastole • a measurement of the minimum pressure during the periods of relaxation.
-> 
-> Although the main function of sweat glands is to cool the body, these glands tend to be come active in emotional situations. Sweat glands are distributed over most of the body surface; but, as you are almost certainly aware, those of the hands, feet, armpits, and forehead are particularly responsive to emotional stimuli.
-> 
-> You have likely had your blood pressure measured with a sphygmomanometer, a crude device composed of a hollow cuff, a rubber bulb for inflating it, and a pressure gauge for measuring the pressure in the cuff (sphygmos means pulse ).
-> 
-> Electrooculography is based on the fact that there is a steady potential difference between the front (positive) and back (negative) of the eyeball.
-> 
-> Because of this steady potential, when the eye moves, a change in the electrical potential between electrodes placed around the eye can be recorded.
-> 
-> It is usual to record EOG activity between two electrodes placed on each side of the eye to measure its horizontal movements and between two electrodes placed above and below the eye to measure its vertical movements.
-> 
-> Measures changes in the skin's ability to conduct electricity due to sweat gland activity
-> 
-> The two most commonly employed indexes of electrodermal activity are the skin conductance level (SCL) and the skin conductance response (SCR).
-> 
-> The SCL is a measure of the background level of skin conductance that is associated with a particular situation
-> 
-> SCR is a measure of the transient changes in skin conductance that are associated with discrete experiences.
-> 
-> The physiological bases of skin conductance changes are not fully understood, but there is considerable evidence implicating the sweat glands.
-> 
-> The electrical signal that is associated with each heartbeat can be recorded through electrodes placed on the chest.
-> 
-> The recording is called an electro cardiogram (ECG).
-> 
-> Measuring arterial blood pressure involves two independent measurements:
-> 
-> Blood pressure is usually expressed as a ratio of systolic over diastolic blood pressure in millimeters of mercury (mmHg).
-> 
-> Changes in the volume of blood in particular parts of the body are associated with psychological events.
-> 
-> # Cardiovascular Activity
-> 
-> Three different measures of cardiovascular activity are frequently employed in psychophysiological research:
-> 
-> # Cardiovascular Activity (Cont.) [Source: UNIT_1_BIOPSYCHOLOGY.pptx, slide 19]
-> 
-> What if the testes are surgically removed from a male song bird? - testosterone levels drops • size of the relevant brain area decreases • stops singing.
-> 
-> BSc Psychology 1st year BATCH – 2026-29
-> 
-> Adult males sing vigorously in spring and early summer (mating season) while during fall and winter they become silent or sing occasionally.
-> 
-> Biological psychology is the study of the physiological, evolutionary, and developmental mechanisms of behavior and experience. It studies how biological processes influence behavior, thoughts, and emotions. The term “biological psychology” emphasizes that the goal is to relate biology to issues of psychology.
-> 
-> Relates an activity to how the brain and other organ's function, even at cellular and chemical levels.
-> 
-> How does the behaviour work?
-> 
-> The term “ontogenetic” – Greek word, meaning “origin”. This describes how a behavior develops. It traces how genes combine with the influence of the environment to produce a behavior.
-> 
-> How did the behaviour develop in this individual?
-> 
-> Relates a behavior to the evolutionary history of a species.
-> 
-> How did the behaviour evolve in the species?
-> 
-> Why is the behaviour useful?
-> 
-> Among songbirds, adult males generally do most of the singing, while females and immature males may sing less or not at all
-> 
-> At the start of the breeding season, testosterone levels rise in males, causing the brain areas responsible for birdsong to increase in size.
-> 
-> What happens if large amounts of testosterone is injected into a female? – relevant brain areas grow in size • female songbirds start singing. This indicates that both size of the brain areas and the ability to sing depends on testosterone and not being a genetic male.
-> 
-> What happens if song control brain areas are damaged in male and female songbirds? – the ability to sing gets disrupted in males, whereas in females, damage cannot decrease her singing because she did not sing even with an intact brain. Effect of her behaviour is that she no longer recognizes the song of her species.
-> 
-> # CHAPTER:1 INTRODUCTION TO BIOPSYCHOLOGY
-> 
-> # Definition of Biopsychology
-> 
-> # Biological Explanations of Behaviour
-> 
-> Describes why a behaviour evolve as it did.
-> 
-> Why do birds sing? • Not all birds sing.
-> 
-> PHYSIOLOGICAL EXPLANATION OF BIRDSONG
-> 
-> 2 brain areas responsible for learning and production of singing behaviour in songbirds
-> 
-> • Caudal nucleus of hyperstriatum ventral
-> 
-> • Robust nucleus of archistriatum
-> 
-> These areas are well developed in songbirds and are larger in size in males.
-> 
-> Size of these brain areas depends on testosterone which is generally higher in levels in males.
-> 
-> # Example: Birdsong (Cont.)
-> 
-> ONTOGENETIC EXPLANATION OF BIRDSONG [Source: UNIT_1_BIOPSYCHOLOGY.pptx, slide 1]
-> 
-> The injected substance then heightens the contrast between the compartment and the surrounding tissue during x-ray photography.
-> 
-> One contrast x-ray technique, cerebral angiography, uses the infusion of a radio-opaque dye (a dye that strongly absorbs X-rays) into a cerebral artery to visualize the cerebral circulatory system during x-ray photography
-> 
-> However, by the time an x-ray beam has passed through the numerous overlapping structures of the brain, which differ only slightly in their ability to absorb x-rays, it carries little information about the structures through which it has passed.
-> 
-> Contrast x-ray techniques involve injecting into one compartment of the body a substance that absorbs x-rays either less than or more than the surrounding tissue.
-> 
-> Computed tomography (CT) is a computer-assisted x-ray procedure that can be used to visualize the brain and other internal structures of the living body.
-> 
-> | X-Ray-Based Techniques | Contrast x-ray (Cerebral Angiography), Computed tomography (CT) |
-> | ------------------------------- | -------------------------------------------------------------------------------- |
-> | Radioactivity-Based Techniques | Positron emission tomography (PET) |
-> | Magnetic-Field-Based Techniques | Magnetic resonance imaging (MRI), Magnetoencephalography, Functional MRI (fMRI) |
-> | Transcranial Stimulation | Transcranial magnetic stimulation (TMS). |
-> 
-> # X-Ray-Based Techniques
-> 
-> Conventional x-ray photography is ineffective in obtaining images of human brain because, when an x-ray photograph is taken, an x-ray beam is passed through an object and then onto a photographic plate.
-> 
-> This makes x-ray photography effective in characterizing internal structures that absorb x-rays differently than their surroundings
-> 
-> # X-Ray-Based Techniques (Cont.)
-> 
-> • Male songbirds choose to sing only at the note ranging from 1kHz – so that frequences don’t get carried over long distances and attract predators.
-> 
-> # Research Methods of BiopsychologyMethods of Studying the Nervous SystemMethods of Visualizing and Stimulating the Living Human Brain
-> 
-> Biopsychologists use various methods to understand how the brain, nervous system, hormones, and behavior are related. These methods help researchers observe brain structure, measure brain activity, and sometimes stimulate specific brain areas to study their functions.
-> 
-> Each molecule the beam has passed through absorbs some of the radiation; thus, only the unabsorbed portions of the beam reach the photographic plate. (Eg: Bones absorb more photons thus image on photographic plate is white in colour. Whereas, tissues absorb less photons thus image on photographic plate is black in colour)
-> 
-> Cerebral angiograms are most useful for localizing vascular damage, but the displacement of blood vessels from their normal position also can indicate the location of a tumor.
-> 
-> • Choosing to sing unique songs because this will help females easily distinguish between other species [Source: UNIT_1_BIOPSYCHOLOGY.pptx, slide 6]
+> I don't have enough information on that based on the provided documents.
 - **Citations Attached:**
-  - **Source Document:** `UNIT_1_BIOPSYCHOLOGY.pptx` (Page 19) | **Similarity Score:** `0.25` | **Chunk ID:** `UNIT_1_BIOPSYCHOLOGY.pptx:p19:c7`
-  - **Source Document:** `UNIT_1_BIOPSYCHOLOGY.pptx` (Page 1) | **Similarity Score:** `0.25` | **Chunk ID:** `UNIT_1_BIOPSYCHOLOGY.pptx:p1:c0`
-  - **Source Document:** `UNIT_1_BIOPSYCHOLOGY.pptx` (Page 6) | **Similarity Score:** `0.25` | **Chunk ID:** `UNIT_1_BIOPSYCHOLOGY.pptx:p6:c2`
-- **Evaluation Notes:** Failed to refuse out-of-scope query
+  - *None (Graceful fallback triggered)*
+- **Evaluation Notes:** Correctly refused with 0 hallucination
 
 ### [Q14] Who won the 1994 FIFA World Cup soccer tournament in Pasadena?
 - **Category:** Out-of-Scope
@@ -1258,127 +1034,13 @@
 
 ### [Q15] How does the Calvin cycle in plant photosynthesis convert carbon dioxide into glucose?
 - **Category:** Out-of-Scope
-- **Retrieval Confidence:** `0.2500`
-- **Pipeline Status:** `success`
+- **Retrieval Confidence:** `0.2464`
+- **Pipeline Status:** `insufficient_context`
 - **Synthesized Answer:**
-> b) How the Blood–Brain Barrier Works?
-> ●
-> The blood–brain barrier depends on the endothelial cells that form the walls of the capillaries
-> ●
-> Outside the brain, such cells are separated by small gaps, but in the brain, they are joined so tightly that virtually nothing passes
-> between them.
-> ●
-> Barrier keeps out useful chemicals as well as harmful ones. Those useful chemicals include all fuels and amino acids, the building
-> blocks for proteins. For the brain to function, it needs special mechanisms to get these chemicals across the blood–brain barrier
-> The brain has several such mechanisms.
-> ●
-> First, small uncharged molecules, including oxygen and carbon dioxide, cross freely. Water crosses through special protein
-> channels in the wall of the endothelial cells.
-> ●
-> Second, molecules that dissolve in the fats of the membrane also cross passively. Examples include vitamins A and D and all the
-> drugs that affect the brain—from antidepressants and other psychiatric drugs to illegal drugs such as heroin.
-> ●
-> For a few other chemicals, the brain uses active transport, a protein-mediated process that expends energy to pump chemicals from
-> the blood into the brain.
-> ●
-> Chemicals that are actively transported into the brain include glucose (the brain’s main fuel), amino acids (the building blocks of
-> proteins), purines, choline, a few vitamins, iron, and certain hormones
-> The Blood–Brain Barrier (Cont.)
-> 
-> ●
-> Most cells use a variety of carbohydrates and fats for nutrition, but vertebrate
-> neurons depend almost entirely on glucose, a sugar. But why?
-> ●
-> Because the metabolic pathway that uses glucose requires oxygen, neurons need a
-> steady supply of oxygen. The brain uses about 20% of all the oxygen consumed in
-> the body.
-> Why do neurons depend so heavily on glucose?
-> ●
-> Although neurons have the enzymes necessary to metabolize other fuels, glucose
-> is practically the only nutrient that crosses the blood–brain barrier after infancy,
-> except for ketones (a kind of fat), and ketones are seldom available in large
-> amounts
-> ●
-> Although neurons require glucose, glucose shortage is rarely a problem.
-> ●
-> The liver makes glucose from many kinds of carbohydrates and amino acids, as
-> well as from glycerol, a breakdown product from fats.
-> ●
-> The only likely problem is an inability to use glucose.
-> ●
-> To use glucose, the body needs vitamin B1, thiamine.
-> ●
-> Prolonged thiamine deficiency, common in chronic alcoholism, leads to death of
-> neurons and a condition called Korsakoff’s syndrome, marked by severe
-> memory impairments
-> Nourishment in Vertebrate Neurons
-> 
-> b) How the Blood–Brain Barrier Works? (Cont.)
-> ●
-> The blood–brain barrier is essential to health.
-> ●
-> In people with Alzheimer’s disease or similar conditions, the
-> endothelial cells lining the brain’s blood vessels shrink, and harmful
-> chemicals enter the brain
-> ●
-> However, the barrier also poses a difficulty in medicine because it
-> keeps out many medications.
-> ●
-> Brain cancers are difficult to treat because nearly all the drugs used for
-> chemotherapy fail to cross the blood–brain barrier
-> The Blood–Brain Barrier (Cont.) [Source: UNIT_2_BIOPSYCHOLOGY.pdf, page 12]
-> 
-> ●
-> Although the brain, like any other organ, needs to receive nutrients from the blood, many chemicals cannot cross from the blood to
-> the brain
-> ●
-> The mechanism that excludes most chemicals from the vertebrate brain is known as the blood–brain barrier.
-> a) Why We Need a Blood–Brain Barrier?
-> ●
-> When a virus invades a cell, mechanisms within the cell extrude virus particles through the membrane so that the immune system
-> can find them. When the immune system cells identify a virus, they kill it and the cell that contains it.
-> ●
-> However, with few exceptions, the vertebrate brain does not replace damaged neurons.
-> ●
-> To minimize the risk of irreparable brain damage, the body builds a wall along the sides of the brain’s blood vessels.
-> ●
-> This wall keeps out most viruses, bacteria, and harmful chemicals.
-> What happens if a virus does enter the nervous system?
-> ●
-> Certain viruses, such as the rabies virus, evade the blood–brain barrier, infect the brain, and lead to death. For several other viruses
-> that enter the nervous system, microglia and other mechanisms attack the viruses or slow their reproduction without killing the
-> neurons they invaded
-> ●
-> However, a virus that enters your nervous system probably remains with you for life. For example, the virus responsible for chicken
-> pox and shingles enters spinal cord cells. No matter how effectively the immune system attacks that virus outside the nervous
-> system, virus particles remain in the spinal cord, from which they can emerge decades later. The same is true for the virus that
-> causes genital herpes
-> The Blood–Brain Barrier [Source: UNIT_2_BIOPSYCHOLOGY.pdf, page 11]
-> 
-> The Nerve Impulse
-> a) Forces Acting on Sodium and Potassium Ions
->  If charged ions could flow freely across the membrane, the membrane would depolarize (inside becomes less negative)
->  However, the membrane is selectively permeable (some chemicals like oxygen, carbon dioxide, urea, and water pass through it
-> more freely than large or electrically charged ions and molecules).
->  A few biologically important ions, such as sodium, potassium, calcium, and chloride, cross through membrane channels (or
-> gates) that are sometimes open and sometimes closed.
->  When the membrane is at rest   the sodium channels are closed, preventing almost all sodium flow & potassium channels are
-> nearly but not entirely closed, so potassium flows slowly.
->  Stimulation opens the channels more widely.
->  The sodium–potassium pump, a protein complex, repeatedly transports 3 sodium ions out of the cell while drawing 2
-> potassium ions into it.
->  The sodium–potassium pump is an active transport that requires energy (ATP).
->  As a result of the sodium–potassium pump, sodium ions are more than 10 times more concentrated outside the membrane
-> than inside, and potassium ions are similarly more concentrated inside than outside.
->  The sodium–potassium pump is effective only because of the selective permeability of the membrane, which prevents the
-> sodium ions that were pumped out of the neuron from leaking right back in again.
->  When sodium ions are pumped out, they stay out. However, some of the potassium ions pumped into the neuron slowly leak out,
-> carrying a positive charge with them. That leakage increases the electrical gradient across the membrane. [Source: UNIT_2_BIOPSYCHOLOGY.pdf, page 16]
+> I don't have enough information on that based on the provided documents.
 - **Citations Attached:**
-  - **Source Document:** `UNIT_2_BIOPSYCHOLOGY.pdf` (Page 12) | **Similarity Score:** `0.25` | **Chunk ID:** `UNIT_2_BIOPSYCHOLOGY.pdf:p12:c10`
-  - **Source Document:** `UNIT_2_BIOPSYCHOLOGY.pdf` (Page 11) | **Similarity Score:** `0.25` | **Chunk ID:** `UNIT_2_BIOPSYCHOLOGY.pdf:p11:c9`
-  - **Source Document:** `UNIT_2_BIOPSYCHOLOGY.pdf` (Page 16) | **Similarity Score:** `0.25` | **Chunk ID:** `UNIT_2_BIOPSYCHOLOGY.pdf:p16:c14`
-- **Evaluation Notes:** Failed to refuse out-of-scope query
+  - *None (Graceful fallback triggered)*
+- **Evaluation Notes:** Correctly refused with 0 hallucination
 
 ---
 

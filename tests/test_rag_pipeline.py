@@ -1,7 +1,7 @@
-"""Unit and Integration Tests for QASubjectBot RAG Pipeline & Vector Search."""
-
+import math
 import pytest
 from embed_index import EmbeddingEngine, VectorStoreIndex
+from evaluate import evaluate_metric_status
 from rag_pipeline import RAGPipeline, answer_question
 
 
@@ -45,7 +45,9 @@ def test_semantic_retrieval_across_topics(rag_pipeline):
 
 def test_out_of_scope_fallback_behavior(rag_pipeline):
     out_of_scope_queries = [
-        "What is the average surface temperature on Mars during winter?",
+        "What is the average surface atmospheric pressure on Mars during winter?",
+        "What are the key ingredients and baking temperature for a traditional chocolate chip cookie?",
+        "How does the Calvin cycle in plant photosynthesis convert carbon dioxide into glucose?",
         "Who won the 1994 FIFA World Cup in soccer?",
     ]
 
@@ -55,6 +57,51 @@ def test_out_of_scope_fallback_behavior(rag_pipeline):
         assert "don't have enough information" in res["answer"].lower()
         assert len(res["citations"]) == 0
         assert res["retrieval_confidence"] < 0.25
+
+
+def test_no_score_inflation_above_reranker_score(rag_pipeline):
+    """Verifies that chunks returned by retrieve() or answer_question() are never inflated above raw reranker score."""
+    test_queries = [
+        "What is Magnetic Resonance Imaging (MRI)?",
+        "What is the average surface atmospheric pressure on Mars during winter?",
+        "What are the key ingredients and baking temperature for a traditional chocolate chip cookie?",
+    ]
+
+    for query in test_queries:
+        retrieved = rag_pipeline.retrieve(query, top_k=5, score_threshold=0.0)
+        for chunk, score in retrieved:
+            pairs = [[query, chunk.text]]
+            raw = rag_pipeline.reranker.model.predict(pairs)
+            raw_norm = round(1.0 / (1.0 + math.exp(-float(raw[0]))), 4)
+            assert score <= raw_norm + 1e-4, f"Score {score} exceeds raw reranker score {raw_norm} for query '{query}'"
+
+
+def test_evaluate_metric_status_helper():
+    """Tests the evaluate_metric_status helper in evaluate.py covering pass, fail and boundary values."""
+    # Operator '>='
+    assert evaluate_metric_status(85.0, 85.0, ">=") == "PASS"
+    assert evaluate_metric_status(85.1, 85.0, ">=") == "PASS"
+    assert evaluate_metric_status(84.9, 85.0, ">=") == "FAIL"
+
+    # Operator '>'
+    assert evaluate_metric_status(0.351, 0.35, ">") == "PASS"
+    assert evaluate_metric_status(0.350, 0.35, ">") == "FAIL"
+    assert evaluate_metric_status(0.349, 0.35, ">") == "FAIL"
+
+    # Operator '<'
+    assert evaluate_metric_status(0.199, 0.20, "<") == "PASS"
+    assert evaluate_metric_status(0.200, 0.20, "<") == "FAIL"
+    assert evaluate_metric_status(0.201, 0.20, "<") == "FAIL"
+
+    # Operator '<='
+    assert evaluate_metric_status(0.200, 0.20, "<=") == "PASS"
+    assert evaluate_metric_status(0.199, 0.20, "<=") == "PASS"
+    assert evaluate_metric_status(0.201, 0.20, "<=") == "FAIL"
+
+    # Operator '=='
+    assert evaluate_metric_status(100.0, 100.0, "==") == "PASS"
+    assert evaluate_metric_status(99.9, 100.0, "==") == "FAIL"
+    assert evaluate_metric_status(100.1, 100.0, "==") == "FAIL"
 
 
 def test_answer_question_api_contract(rag_pipeline):

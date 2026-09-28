@@ -25,6 +25,30 @@ load_dotenv()
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_INDEX_DIR = os.path.join(PROJECT_ROOT, "data", "faiss_index")
+LEXICAL_FALLBACK_MIN_SCORE: float = 0.10
+
+LEXICAL_FALLBACK_STOPWORDS = {
+    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and",
+    "any", "are", "aren't", "as", "at", "be", "because", "been", "before", "being",
+    "below", "between", "both", "but", "by", "can", "can't", "cannot", "could",
+    "couldn't", "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down",
+    "during", "each", "few", "for", "from", "further", "had", "hadn't", "has",
+    "hasn't", "have", "haven't", "having", "he", "her", "here", "hers", "herself",
+    "him", "himself", "his", "how", "i", "if", "in", "into", "is", "isn't", "it",
+    "its", "itself", "just", "me", "more", "most", "my", "myself", "no", "nor",
+    "not", "of", "off", "on", "once", "only", "or", "other", "ought", "our",
+    "ours", "ourselves", "out", "over", "own", "same", "she", "should",
+    "shouldn't", "so", "some", "such", "than", "that", "the", "their", "theirs",
+    "them", "themselves", "then", "there", "these", "they", "this", "those",
+    "through", "to", "too", "under", "until", "up", "very", "was", "wasn't",
+    "we", "were", "weren't", "what", "when", "where", "which", "while", "who",
+    "whom", "why", "with", "won't", "would", "wouldn't", "you", "your", "yours",
+    "yourself", "yourselves",
+    # Generic question / directive terms
+    "explain", "describe", "tell", "give", "discuss", "mention", "state", "show",
+    "detail", "details", "list", "name", "summarize", "summary", "define", "definition",
+    "difference", "differences", "compare", "comparison", "relate", "relating",
+}
 
 
 class CrossEncoderReranker:
@@ -392,24 +416,23 @@ class RAGPipeline:
             # Exact terms from the uploaded document are stronger evidence than
             # a low cross-encoder score caused by different question wording.
             if not filtered_results:
-                stopwords = {
-                    "what", "when", "where", "which", "who", "how", "why", "does",
-                    "are", "is", "the", "a", "an", "and", "or", "of", "to", "in",
-                    "on", "for", "from", "about", "explain", "describe", "tell", "give",
-                }
                 query_terms = {
                     term for term in re.findall(r"[a-z0-9]+", effective_query.lower())
-                    if term not in stopwords and len(term) >= 3
+                    if term not in LEXICAL_FALLBACK_STOPWORDS and len(term) >= 3
                 }
                 lexical_matches = []
-                for chunk, score in full_candidates:
-                    chunk_terms = set(re.findall(r"[a-z0-9]+", chunk.text.lower()))
-                    overlap = len(query_terms & chunk_terms)
-                    if overlap >= 2 or any(len(term) >= 8 and term in chunk_terms for term in query_terms):
-                        lexical_matches.append((overlap, score, chunk))
+                if query_terms:
+                    required_overlap = min(3, len(query_terms))
+                    for chunk, score in full_reranked:
+                        if score >= LEXICAL_FALLBACK_MIN_SCORE:
+                            chunk_terms = set(re.findall(r"[a-z0-9]+", chunk.text.lower()))
+                            overlap = len(query_terms & chunk_terms)
+                            if overlap >= required_overlap:
+                                lexical_matches.append((overlap, score, chunk))
+
                 lexical_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
                 filtered_results = [
-                    (chunk, max(score, threshold))
+                    (chunk, score)
                     for _, score, chunk in lexical_matches[:top_k]
                 ]
 

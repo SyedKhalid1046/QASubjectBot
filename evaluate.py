@@ -270,6 +270,46 @@ def run_evaluation() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     return results, metrics
 
 
+import math
+
+TARGET_OVERALL_ACCURACY = 85.0
+TARGET_IN_SCOPE_ACCURACY = 85.0
+TARGET_CITATION_ACCURACY = 90.0
+TARGET_OUT_OF_SCOPE_REFUSAL_RATE = 100.0
+TARGET_AVG_CONFIDENCE_IN_SCOPE = 0.35
+TARGET_AVG_CONFIDENCE_OUT_OF_SCOPE = 0.20
+
+
+def evaluate_metric_status(value: float, target: float, operator: str) -> str:
+    """Compares a measured metric value with its target using the specified comparison operator.
+
+    Supported operators:
+      '>=' : value must be greater than or equal to target
+      '<=' : value must be less than or equal to target
+      '>'  : value must be strictly greater than target
+      '<'  : value must be strictly less than target
+      '==' : value must equal target (within float tolerance)
+
+    Returns:
+      'PASS' if condition holds, else 'FAIL'.
+    """
+    op = operator.strip()
+    if op == ">=":
+        passed = value >= target
+    elif op == "<=":
+        passed = value <= target
+    elif op == ">":
+        passed = value > target
+    elif op == "<":
+        passed = value < target
+    elif op in ("==", "="):
+        passed = math.isclose(float(value), float(target), abs_tol=1e-5)
+    else:
+        raise ValueError(f"Unsupported comparison operator: {operator}")
+
+    return "PASS" if passed else "FAIL"
+
+
 def generate_markdown_report(results: List[Dict[str, Any]], metrics: Dict[str, Any], output_path: str = "./eval_report.md"):
     """Generates a structured, professional evaluation report in markdown format."""
     lines = []
@@ -282,15 +322,39 @@ def generate_markdown_report(results: List[Dict[str, Any]], metrics: Dict[str, A
     lines.append(f"**Vector Store:** FAISS (`IndexFlatIP` with L2 Unit-Normalization)  \n")
     lines.append("---\n")
 
+    overall_status = evaluate_metric_status(metrics["overall_accuracy_pct"], TARGET_OVERALL_ACCURACY, ">=")
+    in_scope_status = evaluate_metric_status(metrics["in_scope_accuracy_pct"], TARGET_IN_SCOPE_ACCURACY, ">=")
+    citation_status = evaluate_metric_status(metrics["citation_fidelity_pct"], TARGET_CITATION_ACCURACY, ">=")
+    refusal_status = evaluate_metric_status(metrics["refusal_accuracy_pct"], TARGET_OUT_OF_SCOPE_REFUSAL_RATE, "==")
+    conf_in_scope_status = evaluate_metric_status(metrics["avg_confidence_in_scope"], TARGET_AVG_CONFIDENCE_IN_SCOPE, ">")
+    conf_out_scope_status = evaluate_metric_status(metrics["avg_confidence_out_of_scope"], TARGET_AVG_CONFIDENCE_OUT_OF_SCOPE, "<")
+
+    metric_evaluations = [
+        ("Overall Accuracy", overall_status),
+        ("In-Scope Question Accuracy", in_scope_status),
+        ("Source Citation Accuracy", citation_status),
+        ("Out-of-Scope Refusal Rate", refusal_status),
+        ("Average In-Scope Confidence", conf_in_scope_status),
+        ("Average Out-of-Scope Confidence", conf_out_scope_status),
+    ]
+    passed_targets = sum(1 for _, status in metric_evaluations if status == "PASS")
+    total_targets = len(metric_evaluations)
+    failing_metrics = [name for name, status in metric_evaluations if status == "FAIL"]
+
     lines.append("## 1. Executive Summary & Core Metrics\n")
     lines.append("| Metric | Result | Benchmark Target | Status |")
     lines.append("| :--- | :---: | :---: | :---: |")
-    lines.append(f"| **Overall Accuracy** | **{metrics['overall_accuracy_pct']}%** ({sum(1 for r in results if r['is_correct'])}/{metrics['total_questions']}) | >= 85.0% | PASS |")
-    lines.append(f"| **In-Scope Question Accuracy** | **{metrics['in_scope_accuracy_pct']}%** ({sum(1 for r in results if r['is_in_scope'] and r['is_correct'])}/{metrics['in_scope_count']}) | >= 85.0% | PASS |")
-    lines.append(f"| **Source Citation Accuracy** | **{metrics['citation_fidelity_pct']}%** ({sum(1 for r in results if r['is_in_scope'] and r['is_properly_cited'])}/{metrics['in_scope_count']}) | >= 90.0% | PASS |")
-    lines.append(f"| **Out-of-Scope Refusal Rate** | **{metrics['refusal_accuracy_pct']}%** ({sum(1 for r in results if not r['is_in_scope'] and r['is_correct'])}/{metrics['out_of_scope_count']}) | 100.0% | PASS |")
-    lines.append(f"| **Average In-Scope Confidence** | **{metrics['avg_confidence_in_scope']}** | > 0.35 | PASS |")
-    lines.append(f"| **Average Out-of-Scope Confidence** | **{metrics['avg_confidence_out_of_scope']}** | < 0.20 | PASS |\n")
+    lines.append(f"| **Overall Accuracy** | **{metrics['overall_accuracy_pct']}%** ({sum(1 for r in results if r['is_correct'])}/{metrics['total_questions']}) | >= {TARGET_OVERALL_ACCURACY:.1f}% | {overall_status} |")
+    lines.append(f"| **In-Scope Question Accuracy** | **{metrics['in_scope_accuracy_pct']}%** ({sum(1 for r in results if r['is_in_scope'] and r['is_correct'])}/{metrics['in_scope_count']}) | >= {TARGET_IN_SCOPE_ACCURACY:.1f}% | {in_scope_status} |")
+    lines.append(f"| **Source Citation Accuracy** | **{metrics['citation_fidelity_pct']}%** ({sum(1 for r in results if r['is_in_scope'] and r['is_properly_cited'])}/{metrics['in_scope_count']}) | >= {TARGET_CITATION_ACCURACY:.1f}% | {citation_status} |")
+    lines.append(f"| **Out-of-Scope Refusal Rate** | **{metrics['refusal_accuracy_pct']}%** ({sum(1 for r in results if not r['is_in_scope'] and r['is_correct'])}/{metrics['out_of_scope_count']}) | {TARGET_OUT_OF_SCOPE_REFUSAL_RATE:.1f}% | {refusal_status} |")
+    lines.append(f"| **Average In-Scope Confidence** | **{metrics['avg_confidence_in_scope']}** | > {TARGET_AVG_CONFIDENCE_IN_SCOPE:.2f} | {conf_in_scope_status} |")
+    lines.append(f"| **Average Out-of-Scope Confidence** | **{metrics['avg_confidence_out_of_scope']}** | < {TARGET_AVG_CONFIDENCE_OUT_OF_SCOPE:.2f} | {conf_out_scope_status} |\n")
+
+    if failing_metrics:
+        lines.append(f"**Overall result:** {passed_targets} of {total_targets} targets met (Failing: {', '.join(failing_metrics)})\n")
+    else:
+        lines.append(f"**Overall result:** {passed_targets} of {total_targets} targets met (All benchmarks passing)\n")
 
     lines.append("---\n")
     lines.append("## 2. Detailed Test-by-Test Results Table\n")
