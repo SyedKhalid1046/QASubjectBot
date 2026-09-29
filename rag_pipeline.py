@@ -27,9 +27,6 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_INDEX_DIR = os.path.join(PROJECT_ROOT, "data", "faiss_index")
 
 
-_RERANKER_CACHE: Dict[str, Any] = {}
-
-
 class CrossEncoderReranker:
     """Reranks retrieved candidate chunks using a Transformer Cross-Encoder model."""
 
@@ -415,41 +412,31 @@ class RAGPipeline:
             )
             above_thresh = [
                 (chunk, score) for chunk, score in full_reranked if score >= threshold
-            ]
-            if above_thresh:
-                filtered_results = above_thresh[:top_k]
-            else:
-                # Check for strict lexical heading/section match or high-density keyword match
+            ][:top_k]
+
+            # Exact terms from the uploaded document are stronger evidence than
+            # a low cross-encoder score caused by different question wording.
+            if not filtered_results:
                 stopwords = {
                     "what", "when", "where", "which", "who", "how", "why", "does",
                     "are", "is", "the", "a", "an", "and", "or", "of", "to", "in",
                     "on", "for", "from", "about", "explain", "describe", "tell", "give",
-                    "can", "could", "would", "should", "with", "that", "this", "these",
                 }
-                significant_query_terms = {
+                query_terms = {
                     term for term in re.findall(r"[a-z0-9]+", effective_query.lower())
-                    if term not in stopwords and len(term) >= 3
+                    if term not in LEXICAL_FALLBACK_STOPWORDS and len(term) >= 3
                 }
-                if significant_query_terms:
-                    lexical_matches = []
-                    for chunk, score in full_candidates:
-                        chunk_text_lower = chunk.text.lower()
-                        chunk_terms = set(re.findall(r"[a-z0-9]+", chunk_text_lower))
-                        overlap = len(significant_query_terms & chunk_terms)
-                        # Require at least 60% of significant query terms or 3+ terms + non-negative score
-                        overlap_ratio = overlap / len(significant_query_terms)
-                        section_heading = str(chunk.metadata.get("section", "") or chunk.metadata.get("section_heading", "")).lower()
-                        heading_match = any(t in section_heading for t in significant_query_terms if len(t) >= 4)
-
-                        if (overlap_ratio >= 0.6 and overlap >= 2 and score > -1.0) or (heading_match and overlap >= 2):
-                            lexical_matches.append((overlap_ratio, overlap, score, chunk))
-
-                    if lexical_matches:
-                        lexical_matches.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-                        filtered_results = [
-                            (chunk, max(score, threshold))
-                            for _, _, score, chunk in lexical_matches[:top_k]
-                        ]
+                lexical_matches = []
+                for chunk, score in full_candidates:
+                    chunk_terms = set(re.findall(r"[a-z0-9]+", chunk.text.lower()))
+                    overlap = len(query_terms & chunk_terms)
+                    if overlap >= 2 or any(len(term) >= 8 and term in chunk_terms for term in query_terms):
+                        lexical_matches.append((overlap, score, chunk))
+                lexical_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+                filtered_results = [
+                    (chunk, max(score, threshold))
+                    for _, score, chunk in lexical_matches[:top_k]
+                ]
 
         # Deduplicate chunks while preserving order
         seen_chunk_ids = set()
