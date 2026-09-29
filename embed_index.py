@@ -39,6 +39,9 @@ def tokenize_for_bm25(text: str) -> List[str]:
     return [t for t in tokens if len(t) > 1]
 
 
+_EMBEDDING_MODEL_CACHE: Dict[str, Any] = {}
+
+
 class EmbeddingEngine:
     """Manages dense vector embedding generation with automatic L2 normalization for Cosine Similarity."""
 
@@ -60,7 +63,12 @@ class EmbeddingEngine:
         else:
             # Disable symlink warnings on Windows
             os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-            self.model = SentenceTransformer(model_name)
+            if model_name in _EMBEDDING_MODEL_CACHE:
+                self.model = _EMBEDDING_MODEL_CACHE[model_name]
+            else:
+                self.model = SentenceTransformer(model_name)
+                _EMBEDDING_MODEL_CACHE[model_name] = self.model
+
             if hasattr(self.model, "get_embedding_dimension"):
                 self.dimension = self.model.get_embedding_dimension()
             else:

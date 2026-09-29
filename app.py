@@ -312,7 +312,11 @@ def upload_files():
         if not filename:
             filename = f"uploaded_{int(time.time())}_{len(saved_file_infos)}{ext}"
 
-        filepath = os.path.join(upload_dir, filename)
+        filepath = os.path.abspath(os.path.join(upload_dir, filename))
+        if not filepath.startswith(os.path.abspath(upload_dir)):
+            failed_files.append({"filename": orig_name, "reason": "Invalid or unsafe file path detected."})
+            continue
+
         try:
             file.save(filepath)
             saved_file_infos.append({

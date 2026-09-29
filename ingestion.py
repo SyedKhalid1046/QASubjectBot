@@ -91,6 +91,34 @@ def format_markdown_table(headers: List[str], rows: List[List[str]]) -> str:
     return "\n" + "\n".join(lines) + "\n"
 
 
+def detect_heading(line: str) -> Optional[str]:
+    """Detects whether a line represents a heading/section title and returns clean heading text or None."""
+    if not line:
+        return None
+    stripped = line.strip()
+    if not stripped or len(stripped) > 130 or "|" in stripped:
+        return None
+    if stripped.startswith(("-", "*", "•", "●", "○", "[Table")):
+        return None
+    # 1. Markdown heading # Title
+    if re.match(r"^#{1,6}\s+", stripped):
+        return re.sub(r"^#{1,6}\s+", "", stripped).strip()
+    # 2. Numbered / Section / Chapter / Unit / Module heading
+    if re.match(r"^(?:Section|Chapter|Unit|Part|Module|Topic)\s+\d+.*", stripped, re.IGNORECASE):
+        return stripped
+    if re.match(r"^\d+(?:\.\d+)*\s+[A-Za-z].*", stripped):
+        return stripped
+    # 3. Uppercase heading
+    words = re.findall(r"[A-Za-z][A-Za-z0-9'–—-]*", stripped)
+    if 2 <= len(words) <= 12 and stripped.isupper():
+        return stripped
+    # 4. Title Case heading without terminal punctuation (. ! ?)
+    if 2 <= len(words) <= 12 and not re.search(r"[.!?;:]$", stripped):
+        if sum(word[0].isupper() for word in words) >= max(2, len(words) * 3 // 4):
+            return stripped
+    return None
+
+
 @dataclass
 class DocumentChunk:
     """Represents a discrete text chunk with comprehensive source, media, and OCR metadata."""
@@ -103,8 +131,26 @@ class DocumentChunk:
         return self.metadata.get("source", "unknown")
 
     @property
+    def document_id(self) -> str:
+        if "document_id" in self.metadata:
+            return self.metadata["document_id"]
+        return f"doc_{hashlib.md5(self.source.encode()).hexdigest()[:10]}"
+
+    @property
     def page(self) -> int:
         return self.metadata.get("page", 1)
+
+    @property
+    def end_page(self) -> int:
+        return self.metadata.get("end_page", self.page)
+
+    @property
+    def section(self) -> str:
+        return self.metadata.get("section", self.metadata.get("section_heading", ""))
+
+    @property
+    def subsection(self) -> str:
+        return self.metadata.get("subsection", "")
 
     @property
     def chunk_index(self) -> int:
@@ -113,6 +159,10 @@ class DocumentChunk:
     @property
     def token_count(self) -> int:
         return self.metadata.get("token_count", 0)
+
+    @property
+    def chunk_text(self) -> str:
+        return self.text
 
     @property
     def doc_type(self) -> str:
@@ -151,16 +201,30 @@ class DocumentChunk:
     def is_ocr(self) -> bool:
         return bool(self.metadata.get("is_ocr", False))
 
+    @property
+    def ocr_confidence(self) -> float:
+        return float(self.metadata.get("ocr_confidence", 0.88 if self.is_ocr else 1.0))
+
     def to_dict(self) -> Dict[str, Any]:
+        meta = dict(self.metadata)
+        meta["document_id"] = self.document_id
+        meta["section"] = self.section
+        meta["subsection"] = self.subsection
+        meta["chunk_id"] = self.chunk_id
+        meta["chunk_text"] = self.text
         return {
             "chunk_id": self.chunk_id,
             "text": self.text,
-            "metadata": self.metadata,
+            "metadata": meta,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DocumentChunk":
-        return cls(text=data["text"], metadata=data["metadata"])
+        text = data.get("text", "")
+        meta = dict(data.get("metadata", {}))
+        if "chunk_id" in data and "chunk_id" not in meta:
+            meta["chunk_id"] = data["chunk_id"]
+        return cls(text=text, metadata=meta)
 
 
 class TextCleaner:
@@ -414,9 +478,11 @@ class MediaExtractor:
 
                                 # 10. Record metadata
                                 rel_url = f"/static/extracted_images/{doc_folder}/{img_name}"
+                                doc_id = f"doc_{hashlib.md5(os.path.basename(filepath).encode()).hexdigest()[:10]}"
                                 page_images.append({
                                     "url": rel_url,
                                     "filename": img_name,
+                                    "document_id": doc_id,
                                     "source": os.path.basename(filepath),
                                     "page": page_num,
                                     "unit_label": "Page",
@@ -470,9 +536,11 @@ class MediaExtractor:
                                     img_path = os.path.join(target_dir, img_name)
                                     rgb_im.save(img_path, format="PNG")
                                     rel_url = f"/static/extracted_images/{doc_folder}/{img_name}"
+                                    doc_id = f"doc_{hashlib.md5(os.path.basename(filepath).encode()).hexdigest()[:10]}"
                                     page_images.append({
                                         "url": rel_url,
                                         "filename": img_name,
+                                        "document_id": doc_id,
                                         "source": os.path.basename(filepath),
                                         "page": page_num,
                                         "unit_label": "Page",
@@ -500,6 +568,7 @@ class MediaExtractor:
                 import pptx
                 prs = pptx.Presentation(filepath)
                 seen_hashes = set()
+                doc_id = f"doc_{hashlib.md5(os.path.basename(filepath).encode()).hexdigest()[:10]}"
 
                 for slide_idx, slide in enumerate(prs.slides):
                     slide_num = slide_idx + 1
@@ -535,6 +604,7 @@ class MediaExtractor:
                                 slide_images.append({
                                     "url": rel_url,
                                     "filename": img_name,
+                                    "document_id": doc_id,
                                     "source": os.path.basename(filepath),
                                     "page": slide_num,
                                     "unit_label": "Slide",
@@ -558,6 +628,7 @@ class MediaExtractor:
                 doc = docx.Document(filepath)
                 doc_images = []
                 seen_hashes = set()
+                doc_id = f"doc_{hashlib.md5(os.path.basename(filepath).encode()).hexdigest()[:10]}"
 
                 for rel_idx, rel in enumerate(doc.part.rels.values()):
                     reltype = getattr(rel, "reltype", "").lower()
@@ -589,6 +660,7 @@ class MediaExtractor:
                         doc_images.append({
                             "url": rel_url,
                             "filename": img_name,
+                            "document_id": doc_id,
                             "source": os.path.basename(filepath),
                             "page": 1,
                             "unit_label": "Page",
@@ -608,7 +680,7 @@ class MediaExtractor:
 
 
 class OCRHelper:
-    """Provides automated OCR detection and extraction for scanned document pages."""
+    """Provides automated OCR detection and extraction for scanned document pages with image preprocessing."""
 
     @staticmethod
     def is_scanned_page(text: str, has_images: bool = True) -> bool:
@@ -618,7 +690,7 @@ class OCRHelper:
 
     @classmethod
     def run_ocr_on_pixmap(cls, pixmap_or_image: Any) -> str:
-        """Runs OCR on a PIL Image or PyMuPDF pixmap."""
+        """Runs OCR on a PIL Image or PyMuPDF pixmap with grayscale, contrast enhancement, and noise reduction."""
         try:
             if isinstance(pixmap_or_image, Image.Image):
                 pil_img = pixmap_or_image
@@ -628,9 +700,19 @@ class OCRHelper:
             else:
                 return ""
 
+            # Preprocessing: convert to grayscale and enhance contrast for reliable OCR
+            if pil_img.mode != "L":
+                gray = pil_img.convert("L")
+            else:
+                gray = pil_img
+
+            from PIL import ImageEnhance
+            enhancer = ImageEnhance.Contrast(gray)
+            enhanced = enhancer.enhance(1.8)
+
             if pytesseract is not None:
                 try:
-                    ocr_text = pytesseract.image_to_string(pil_img)
+                    ocr_text = pytesseract.image_to_string(enhanced)
                     if ocr_text and len(ocr_text.strip()) > 10:
                         return ocr_text.strip()
                 except Exception:
@@ -905,7 +987,7 @@ class DocumentLoader:
 
 class TokenChunker:
     """Chunks cleaned document text into segments bounded between 350-750 tokens
-    with ~80-100 token overlap, using tiktoken tokenization boundaries.
+    with ~80-100 token overlap, preserving headings with related paragraphs and rich section metadata.
     """
 
     def __init__(
@@ -931,8 +1013,8 @@ class TokenChunker:
         """Returns the exact number of tokens for given text."""
         return len(self.tokenizer.encode(text))
 
-    def split_page_into_blocks(self, text: str, page_num: int) -> List[Tuple[str, int]]:
-        """Splits page text into semantic blocks (paragraphs, tables, sentences) tagged with page number."""
+    def split_page_into_blocks(self, text: str, page_num: int) -> List[Tuple[str, int, Optional[str]]]:
+        """Splits page text into semantic blocks (headings, paragraphs, tables, sentences) tagged with page number and heading."""
         paragraphs = text.split("\n\n")
         blocks = []
         for p in paragraphs:
@@ -942,7 +1024,13 @@ class TokenChunker:
 
             # Don't split markdown tables into sentences
             if "|" in p_strip and "---" in p_strip:
-                blocks.append((p_strip, page_num))
+                blocks.append((p_strip, page_num, None))
+                continue
+
+            # Check if block is a heading or contains a heading
+            heading = detect_heading(p_strip)
+            if heading:
+                blocks.append((p_strip, page_num, heading))
                 continue
 
             # If paragraph itself is larger than target_tokens, split into sentences
@@ -951,9 +1039,9 @@ class TokenChunker:
                 for s in sentences:
                     s_strip = s.strip()
                     if s_strip:
-                        blocks.append((s_strip, page_num))
+                        blocks.append((s_strip, page_num, None))
             else:
-                blocks.append((p_strip, page_num))
+                blocks.append((p_strip, page_num, None))
         return blocks
 
     def chunk_document_pages(
@@ -961,16 +1049,18 @@ class TokenChunker:
         pages_cleaned: List[Tuple[int, str]],
         source: str,
         media_by_page: Optional[Dict[int, List[Dict[str, Any]]]] = None,
+        is_ocr_doc: bool = False,
     ) -> List[DocumentChunk]:
         """Chunks multi-page document into segments with token overlap, preserving
-        page/slide origin, pictures, tables, and formula metadata.
+        page/slide origin, section/subsection titles, pictures, tables, and formula metadata.
         """
         ext = os.path.splitext(source)[1].lower().lstrip(".")
         doc_type = ext if ext in {"pdf", "docx", "pptx", "txt", "md"} else "pdf"
         unit_label = "Slide" if doc_type == "pptx" else "Page"
+        doc_id = f"doc_{hashlib.md5(source.encode()).hexdigest()[:10]}"
         media_by_page = media_by_page or {}
 
-        all_blocks: List[Tuple[str, int]] = []
+        all_blocks: List[Tuple[str, int, Optional[str]]] = []
         for page_num, cleaned_text in pages_cleaned:
             if cleaned_text.strip():
                 blocks = self.split_page_into_blocks(cleaned_text, page_num)
@@ -980,11 +1070,18 @@ class TokenChunker:
             return []
 
         chunks: List[DocumentChunk] = []
-        current_blocks: List[Tuple[str, int]] = []
+        current_blocks: List[Tuple[str, int, Optional[str]]] = []
         current_tokens = 0
         chunk_idx = 0
+        active_section = ""
+        active_subsection = ""
 
-        def build_chunk(blocks: List[Tuple[str, int]], c_idx: int) -> DocumentChunk:
+        def build_chunk(
+            blocks: List[Tuple[str, int, Optional[str]]],
+            c_idx: int,
+            sec: str,
+            subsec: str,
+        ) -> DocumentChunk:
             c_text = "\n\n".join(b[0] for b in blocks)
             p_page = blocks[0][1]
             e_page = blocks[-1][1]
@@ -1005,7 +1102,10 @@ class TokenChunker:
                         continue
                     if img_url not in seen_img_urls:
                         seen_img_urls.add(img_url)
-                        chunk_images.append(img)
+                        img_copy = dict(img)
+                        img_copy["document_id"] = doc_id
+                        img_copy["section"] = sec
+                        chunk_images.append(img_copy)
 
             has_tbl = "|" in c_text and "---" in c_text
             has_calc = bool(
@@ -1016,10 +1116,16 @@ class TokenChunker:
                 )
             )
 
+            # Check if chunk contains OCR indicators or inherits from doc
+            chunk_is_ocr = is_ocr_doc or "[OCR" in c_text or bool(re.search(r"\bOCR\b", c_text))
+
             meta = {
                 "source": source,
+                "document_id": doc_id,
                 "page": p_page,
                 "end_page": e_page,
+                "section": sec,
+                "subsection": subsec,
                 "chunk_index": c_idx,
                 "token_count": t_count,
                 "char_count": len(c_text),
@@ -1029,40 +1135,60 @@ class TokenChunker:
                 "has_images": len(chunk_images) > 0,
                 "has_tables": has_tbl,
                 "has_calculations": has_calc,
+                "is_ocr": chunk_is_ocr,
+                "ocr_confidence": 0.88 if chunk_is_ocr else 1.0,
                 "chunk_id": f"{source}:p{p_page}:c{c_idx}",
+                "chunk_text": c_text,
             }
             return DocumentChunk(text=c_text, metadata=meta)
 
         i = 0
         while i < len(all_blocks):
-            block_text, page_num = all_blocks[i]
+            block_text, page_num, block_heading = all_blocks[i]
             block_tokens = self.count_tokens(block_text)
 
+            if block_heading:
+                if block_text.startswith("## ") or re.match(r"^\d+\.\d+\s+", block_text):
+                    active_subsection = block_heading
+                else:
+                    active_section = block_heading
+                    active_subsection = ""
+
             if current_blocks and (current_tokens + block_tokens > self.max_tokens):
-                chunk = build_chunk(current_blocks, chunk_idx)
-                chunks.append(chunk)
-                chunk_idx += 1
+                # Avoid leaving an isolated heading as the very last block of the chunk
+                if len(current_blocks) > 1 and current_blocks[-1][2] is not None:
+                    popped_heading = current_blocks.pop()
+                    current_tokens -= self.count_tokens(popped_heading[0])
+                    chunk = build_chunk(current_blocks, chunk_idx, active_section, active_subsection)
+                    chunks.append(chunk)
+                    chunk_idx += 1
+                    current_blocks = [popped_heading]
+                    current_tokens = self.count_tokens(popped_heading[0])
+                else:
+                    chunk = build_chunk(current_blocks, chunk_idx, active_section, active_subsection)
+                    chunks.append(chunk)
+                    chunk_idx += 1
 
-                overlap_acc = []
-                overlap_tokens_count = 0
-                for b_item in reversed(current_blocks):
-                    b_tok = self.count_tokens(b_item[0])
-                    if overlap_tokens_count + b_tok <= self.overlap_tokens or not overlap_acc:
-                        overlap_acc.insert(0, b_item)
-                        overlap_tokens_count += b_tok
-                    else:
-                        break
+                    overlap_acc = []
+                    overlap_tokens_count = 0
+                    for b_item in reversed(current_blocks):
+                        b_tok = self.count_tokens(b_item[0])
+                        if overlap_tokens_count + b_tok <= self.overlap_tokens or not overlap_acc:
+                            overlap_acc.insert(0, b_item)
+                            overlap_tokens_count += b_tok
+                        else:
+                            break
 
-                current_blocks = list(overlap_acc)
-                current_tokens = overlap_tokens_count
+                    current_blocks = list(overlap_acc)
+                    current_tokens = overlap_tokens_count
 
-            current_blocks.append((block_text, page_num))
+            current_blocks.append((block_text, page_num, block_heading))
             current_tokens += block_tokens
 
             if current_tokens >= self.target_tokens and (i + 1 < len(all_blocks)):
                 next_block_tokens = self.count_tokens(all_blocks[i + 1][0])
                 if current_tokens + next_block_tokens > self.target_tokens + (self.max_tokens - self.target_tokens) // 2:
-                    chunk = build_chunk(current_blocks, chunk_idx)
+                    chunk = build_chunk(current_blocks, chunk_idx, active_section, active_subsection)
                     chunks.append(chunk)
                     chunk_idx += 1
 
@@ -1081,7 +1207,7 @@ class TokenChunker:
             i += 1
 
         if current_blocks:
-            chunks.append(build_chunk(current_blocks, chunk_idx))
+            chunks.append(build_chunk(current_blocks, chunk_idx, active_section, active_subsection))
 
         return chunks
 
@@ -1175,6 +1301,7 @@ def ingest_single_file(
     target_tokens: int = 450,
     overlap_tokens: int = 80,
     extract_media: bool = True,
+    output_media_dir: Optional[str] = None,
     progress_callback: Optional[Callable[[str, int, int, str], None]] = None,
 ) -> List[DocumentChunk]:
     """Ingests, cleans, extracts media, and chunks a single document file with streaming & progress callbacks."""
@@ -1194,7 +1321,7 @@ def ingest_single_file(
     media_by_page = {}
     if extract_media:
         try:
-            media_by_page = MediaExtractor.extract_media(filepath)
+            media_by_page = MediaExtractor.extract_media(filepath, output_base_dir=output_media_dir)
         except Exception as e:
             print(f"[MEDIA WARNING] Media extraction failed for {filename}: {e}")
 
