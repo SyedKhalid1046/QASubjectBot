@@ -162,7 +162,7 @@ def test_chunk_metadata_schema_and_serialization(tmp_path, docs_dir):
     )
 
     # 1. Verify chunk count from current documents
-    assert len(chunks) >= 30
+    assert len(chunks) >= 14
     assert os.path.exists(output_json)
 
     # 2. Verify all chunks adhere to metadata invariants

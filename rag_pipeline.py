@@ -27,6 +27,9 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_INDEX_DIR = os.path.join(PROJECT_ROOT, "data", "faiss_index")
 
 
+_RERANKER_CACHE: Dict[str, Any] = {}
+
+
 class CrossEncoderReranker:
     """Reranks retrieved candidate chunks using a Transformer Cross-Encoder model."""
 
@@ -39,7 +42,11 @@ class CrossEncoderReranker:
             from sentence_transformers import CrossEncoder
             # Set HF warning suppression
             os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-            self.model = CrossEncoder(model_name)
+            if model_name in _RERANKER_CACHE:
+                self.model = _RERANKER_CACHE[model_name]
+            else:
+                self.model = CrossEncoder(model_name)
+                _RERANKER_CACHE[model_name] = self.model
             print(f"[RERANKER] Initialized Cross-Encoder ({model_name})")
         except Exception as e:
             print(f"[RERANKER WARNING] Could not load CrossEncoder ({e}). Using similarity scores.")
@@ -87,6 +94,9 @@ class ConversationMemory:
         "he", "she", "him", "her", "the formula", "the equation", "the technique",
         "the method", "the concept", "the process", "the approach", "advantages",
         "disadvantages", "limitations", "examples", "applications", "why is that",
+        "what about", "how about", "explain more", "and its", "its main", "their",
+        "above", "below", "that process", "the previous concept", "its function",
+        "main function", "function of", "how does it work", "why does it", "what triggers it",
     }
 
     @classmethod
@@ -96,9 +106,9 @@ class ConversationMemory:
         words = set(re.findall(r"\b\w+\b", q_lower))
 
         # Check for ambiguous pronouns or short referential phrases
-        if len(words) <= 5 and any(p in words for p in ["it", "this", "that", "why", "how", "what"]):
+        if len(words) <= 7 and any(p in words for p in ["it", "its", "this", "that", "these", "they", "them", "why", "how", "what"]):
             return True
-        if any(ref in q_lower for ref in ["what about", "how about", "explain more", "and its", "its main", "their"]):
+        if any(ref in q_lower for ref in ["what about", "how about", "explain more", "and its", "its main", "their", "above", "below", "that process", "the previous"]):
             return True
         return False
 
@@ -151,18 +161,30 @@ class ConversationMemory:
             except Exception as e:
                 print(f"[MEMORY REWRITE ERROR] LLM query rewriting failed: {e}")
 
-        # Deterministic Keyword-Augmentation Fallback
+        # Deterministic coreference rewriting
         if cls.is_followup_query(query):
             # Extract key nouns/terms from previous user turn
-            prev_words = re.findall(r"\b[a-zA-Z0-9_\-]{4,}\b", last_user_turn)
+            prev_terms = re.findall(r"\b[A-Za-z0-9_\-]{3,}\b", last_user_turn)
             prev_stopwords = {
                 "what", "when", "where", "which", "explain", "describe", "about",
                 "does", "have", "been", "with", "from", "that", "this", "these",
+                "tell", "show", "give", "much", "many", "more", "also",
             }
-            salient_terms = [w for w in prev_words if w.lower() not in prev_stopwords]
-            if salient_terms:
-                augmented = f"{query} {' '.join(salient_terms[:3])}"
-                return augmented.strip()
+            salient = [t for t in prev_terms if t.lower() not in prev_stopwords]
+            topic_phrase = " ".join(salient[:3]) if salient else ""
+
+            q_lower = query.lower()
+            if topic_phrase:
+                if "its main function" in q_lower or "its function" in q_lower:
+                    return f"What is the main function of {topic_phrase}?"
+                elif "its" in q_lower:
+                    rewritten = re.sub(r"\bits\b", f"the {topic_phrase}'s", query, flags=re.IGNORECASE)
+                    return rewritten.strip()
+                elif re.search(r"\b(it|this|that|these|they)\b", q_lower):
+                    rewritten = re.sub(r"\b(it|this|that|these|they)\b", topic_phrase, query, flags=re.IGNORECASE)
+                    return rewritten.strip()
+                else:
+                    return f"{query} {topic_phrase}".strip()
 
         return query.strip()
 
@@ -170,7 +192,7 @@ class ConversationMemory:
 class ExtractiveFallbackLLM:
     """Local deterministic generator used when no external API key is configured.
     Synthesizes complete, grounded answers strictly from retrieved context passages with verified citations,
-    preserving Markdown tables and calculation formulas.
+    preserving Markdown tables and calculation formulas in natural document order.
     """
 
     def generate(self, query: str, context_chunks: List[Tuple[DocumentChunk, float]]) -> str:
@@ -186,21 +208,24 @@ class ExtractiveFallbackLLM:
 
         sections = []
         seen_texts = set()
-        complete_section_context = any(
-            chunk.metadata.get("section_expanded") for chunk, _ in context_chunks
+
+        # Sort context chunks in natural document order
+        sorted_chunks = sorted(
+            context_chunks,
+            key=lambda item: (item[0].source, item[0].page, item[0].chunk_index)
         )
 
-        for chunk, score in context_chunks:
+        for chunk, score in sorted_chunks:
             text = chunk.text.strip()
             if not text:
                 continue
 
             # Split by double newline or logical paragraph boundaries
             paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-
             chunk_paras = []
+
             for p in paragraphs:
-                if len(p) < 20:
+                if len(p) < 15:
                     continue
                 p_norm = re.sub(r"\s+", " ", p).lower()
                 if p_norm in seen_texts:
@@ -213,14 +238,11 @@ class ExtractiveFallbackLLM:
                 overlap = len(meaningful_query_words.intersection(p_words))
                 if chunk.metadata.get("section_expanded") or overlap > 0 or is_table_or_calc or len(chunk_paras) == 0:
                     seen_texts.add(p_norm)
-                    priority = overlap + (5 if is_table_or_calc else 0)
-                    chunk_paras.append((priority, p))
+                    chunk_paras.append(p)
 
             unit = getattr(chunk, "unit_label", "Page").lower()
             if chunk_paras:
-                chunk_paras.sort(key=lambda x: x[0], reverse=True)
-                selected_paras = [item[1] for item in chunk_paras] if chunk.metadata.get("section_expanded") else [item[1] for item in chunk_paras[:2]]
-                combined_text = "\n\n".join(selected_paras)
+                combined_text = "\n\n".join(chunk_paras)
                 citation = f"[Source: {chunk.source}, {unit} {chunk.page}]"
                 sections.append(f"{combined_text} {citation}")
             else:
@@ -230,11 +252,8 @@ class ExtractiveFallbackLLM:
                     citation = f"[Source: {chunk.source}, {unit} {chunk.page}]"
                     sections.append(f"{text} {citation}")
 
-            if not complete_section_context and len(sections) >= 2:
-                break
-
         if not sections:
-            top_chunk, _ = context_chunks[0]
+            top_chunk, _ = sorted_chunks[0]
             unit = getattr(top_chunk, "unit_label", "Page").lower()
             citation = f"[Source: {top_chunk.source}, {unit} {top_chunk.page}]"
             return f"{top_chunk.text.strip()} {citation}"
@@ -335,8 +354,8 @@ class RAGPipeline:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         use_reranker: bool = True,
     ) -> List[Tuple[DocumentChunk, float]]:
-        """Hybrid retrieval: Rewrites query with memory, fetches top 10 candidates via Hybrid BM25+FAISS,
-        and reranks down to top_k with Cross-Encoder.
+        """Hybrid retrieval: Rewrites query with memory, dynamically determines candidate window,
+        fetches candidates via Hybrid BM25+FAISS, and reranks down with Cross-Encoder.
         Returns List of (chunk, score).
         """
         threshold = self.score_threshold if score_threshold is None else score_threshold
@@ -350,8 +369,18 @@ class RAGPipeline:
         )
         self.last_effective_query = effective_query
 
-        # 2. Hybrid Candidate Retrieval (top 10 candidates)
-        candidate_count = max(10, top_k * 3)
+        # Dynamic retrieval depth based on query complexity
+        complex_indicators = {
+            "explain", "describe", "compare", "contrast", "difference", "differences",
+            "relationship", "overview", "summary", "summarize", "detail", "details",
+            "process", "steps", "all", "list", "comprehensive", "architecture", "mechanism",
+        }
+        query_words = set(re.findall(r"[a-z0-9]+", effective_query.lower()))
+        is_complex = bool(query_words & complex_indicators)
+        effective_top_k = min(top_k + 2, 8) if is_complex else top_k
+
+        # 2. Hybrid Candidate Retrieval
+        candidate_count = max(12, effective_top_k * 3)
         candidate_chunks = self.vector_store.hybrid_search(
             query=effective_query,
             top_k=candidate_count,
@@ -363,17 +392,16 @@ class RAGPipeline:
             reranked_chunks = self.reranker.rerank(
                 query=effective_query,
                 candidate_chunks=candidate_chunks,
-                top_k=top_k,
+                top_k=effective_top_k,
             )
         else:
-            reranked_chunks = candidate_chunks[:top_k]
+            reranked_chunks = candidate_chunks[:effective_top_k]
 
         # 4. Threshold filtering
         filtered_results = [(chunk, score) for chunk, score in reranked_chunks if score >= threshold]
 
-        # A refusal must only happen after checking the complete uploaded corpus.
-        # The normal path stays small for latency; this recovery path prevents a
-        # relevant chunk ranked outside the first candidate window from being missed.
+        # 5. Targeted recovery only when high-confidence grounding exists
+        # A refusal must happen if the topic is truly absent from the corpus.
         if not filtered_results and len(candidate_chunks) < len(self.vector_store.chunks):
             full_candidates = self.vector_store.hybrid_search(
                 query=effective_query,
@@ -385,35 +413,53 @@ class RAGPipeline:
                 candidate_chunks=full_candidates,
                 top_k=min(len(full_candidates), max(top_k * 4, 12)),
             )
-            filtered_results = [
+            above_thresh = [
                 (chunk, score) for chunk, score in full_reranked if score >= threshold
-            ][:top_k]
-
-            # Exact terms from the uploaded document are stronger evidence than
-            # a low cross-encoder score caused by different question wording.
-            if not filtered_results:
+            ]
+            if above_thresh:
+                filtered_results = above_thresh[:top_k]
+            else:
+                # Check for strict lexical heading/section match or high-density keyword match
                 stopwords = {
                     "what", "when", "where", "which", "who", "how", "why", "does",
                     "are", "is", "the", "a", "an", "and", "or", "of", "to", "in",
                     "on", "for", "from", "about", "explain", "describe", "tell", "give",
+                    "can", "could", "would", "should", "with", "that", "this", "these",
                 }
-                query_terms = {
+                significant_query_terms = {
                     term for term in re.findall(r"[a-z0-9]+", effective_query.lower())
                     if term not in stopwords and len(term) >= 3
                 }
-                lexical_matches = []
-                for chunk, score in full_candidates:
-                    chunk_terms = set(re.findall(r"[a-z0-9]+", chunk.text.lower()))
-                    overlap = len(query_terms & chunk_terms)
-                    if overlap >= 2 or any(len(term) >= 8 and term in chunk_terms for term in query_terms):
-                        lexical_matches.append((overlap, score, chunk))
-                lexical_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
-                filtered_results = [
-                    (chunk, max(score, threshold))
-                    for _, score, chunk in lexical_matches[:top_k]
-                ]
+                if significant_query_terms:
+                    lexical_matches = []
+                    for chunk, score in full_candidates:
+                        chunk_text_lower = chunk.text.lower()
+                        chunk_terms = set(re.findall(r"[a-z0-9]+", chunk_text_lower))
+                        overlap = len(significant_query_terms & chunk_terms)
+                        # Require at least 60% of significant query terms or 3+ terms + non-negative score
+                        overlap_ratio = overlap / len(significant_query_terms)
+                        section_heading = str(chunk.metadata.get("section", "") or chunk.metadata.get("section_heading", "")).lower()
+                        heading_match = any(t in section_heading for t in significant_query_terms if len(t) >= 4)
 
-        return filtered_results
+                        if (overlap_ratio >= 0.6 and overlap >= 2 and score > -1.0) or (heading_match and overlap >= 2):
+                            lexical_matches.append((overlap_ratio, overlap, score, chunk))
+
+                    if lexical_matches:
+                        lexical_matches.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+                        filtered_results = [
+                            (chunk, max(score, threshold))
+                            for _, _, score, chunk in lexical_matches[:top_k]
+                        ]
+
+        # Deduplicate chunks while preserving order
+        seen_chunk_ids = set()
+        deduped_results = []
+        for chunk, score in filtered_results:
+            if chunk.chunk_id not in seen_chunk_ids:
+                seen_chunk_ids.add(chunk.chunk_id)
+                deduped_results.append((chunk, score))
+
+        return deduped_results
 
     def format_context_prompt(
         self,
@@ -467,7 +513,9 @@ class RAGPipeline:
         query: str,
         retrieved_chunks: List[Tuple[DocumentChunk, float]],
     ) -> List[Tuple[DocumentChunk, float]]:
-        """Expands hits to the document section between its heading and next heading."""
+        """Expands hits to the document section between its heading and next heading,
+        preserving original document order and source isolation.
+        """
         if not retrieved_chunks:
             return []
 
@@ -476,12 +524,13 @@ class RAGPipeline:
         for chunk in self.vector_store.chunks:
             chunks_by_source.setdefault(chunk.source, []).append(chunk)
         for source_chunks in chunks_by_source.values():
-            source_chunks.sort(key=lambda item: item.chunk_index)
+            source_chunks.sort(key=lambda item: (item.page, getattr(item, "chunk_index", 0)))
 
         expanded: Dict[str, Tuple[DocumentChunk, float]] = {}
         for hit, hit_score in retrieved_chunks:
             source_chunks = chunks_by_source.get(hit.source, [])
             if not source_chunks:
+                expanded[hit.chunk_id] = (hit, hit_score)
                 continue
             hit_index = next((i for i, item in enumerate(source_chunks) if item.chunk_id == hit.chunk_id), None)
             if hit_index is None:
@@ -513,11 +562,14 @@ class RAGPipeline:
                     next_heading_index = index
                     break
 
-            for section_chunk in source_chunks[heading_index:next_heading_index]:
+            # Limit expansion to reasonable section window (up to 4 adjacent chunks)
+            end_idx = min(next_heading_index, heading_index + 4)
+            for section_chunk in source_chunks[heading_index:end_idx]:
                 if section_chunk.chunk_id not in expanded:
                     section_metadata = dict(section_chunk.metadata)
                     section_metadata["section_expanded"] = True
-                    section_metadata["section_heading"] = selected_heading
+                    if selected_heading:
+                        section_metadata["section_heading"] = selected_heading
                     expanded[section_chunk.chunk_id] = (
                         DocumentChunk(text=section_chunk.text, metadata=section_metadata),
                         hit_score,
@@ -525,7 +577,11 @@ class RAGPipeline:
 
         if not expanded:
             return retrieved_chunks
-        return list(expanded.values())
+
+        # Sort expanded chunks in natural document order: (source, page, chunk_index)
+        results = list(expanded.values())
+        results.sort(key=lambda x: (x[0].source, x[0].page, getattr(x[0], "chunk_index", 0)))
+        return results
 
     def extract_structured_citations(
         self,
@@ -585,17 +641,26 @@ class RAGPipeline:
         self,
         query: str,
         retrieved_chunks: List[Tuple[DocumentChunk, float]],
-        page_window: int = 2,
+        page_window: int = 1,
     ) -> List[Dict[str, Any]]:
-        """Collects figures attached to nearby chunks when text and figure split across pages."""
+        """Collects figures and diagrams strictly matching the retrieved source documents
+        and pages/sections, completely preventing cross-document image leakage.
+        """
+        if not retrieved_chunks:
+            return []
+
         relevant_images: List[Dict[str, Any]] = []
         seen_img_urls = set()
         query_terms = set(re.findall(r"[a-z0-9]+", query.lower()))
+
+        # Map active retrieved sources and their page ranges
+        retrieved_sources = {chunk.source for chunk, _ in retrieved_chunks}
         retrieved_ranges = [
             (
                 chunk.source,
                 chunk.page,
                 chunk.metadata.get("end_page", chunk.page),
+                getattr(chunk, "document_id", ""),
                 score,
             )
             for chunk, score in retrieved_chunks
@@ -603,32 +668,56 @@ class RAGPipeline:
 
         candidates = []
         for chunk in self.vector_store.chunks:
+            # Strict multi-document isolation: chunk must belong to one of the retrieved sources
+            if chunk.source not in retrieved_sources:
+                continue
+
             chunk_images = getattr(chunk, "images", [])
             if not chunk_images:
                 continue
+
             chunk_terms = set(re.findall(r"[a-z0-9]+", chunk.text.lower()))
             term_overlap = len(query_terms & chunk_terms)
 
-            for source, start_page, end_page, retrieved_score in retrieved_ranges:
+            for source, start_page, end_page, doc_id, retrieved_score in retrieved_ranges:
                 if chunk.source != source:
                     continue
+                # If document_id is present, enforce exact document_id match
+                if doc_id and getattr(chunk, "document_id", "") and chunk.document_id != doc_id:
+                    continue
+
                 chunk_end_page = chunk.metadata.get("end_page", chunk.page)
                 distance = 0 if chunk.page <= end_page and chunk_end_page >= start_page else min(
                     abs(chunk.page - end_page), abs(start_page - chunk_end_page)
                 )
                 if distance <= page_window:
-                    candidates.append((term_overlap, -distance, retrieved_score, chunk))
+                    candidates.append((term_overlap, -distance, retrieved_score, chunk, source, doc_id))
                     break
 
         candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-        for term_overlap, _, retrieved_score, chunk in candidates:
+        for term_overlap, _, retrieved_score, chunk, target_source, target_doc_id in candidates:
             for image in chunk.images:
-                image_url = image.get("url")
+                if not isinstance(image, dict):
+                    continue
+                image_url = image.get("url") or image.get("path")
+                img_source = image.get("source") or chunk.source
+                img_doc_id = image.get("document_id") or getattr(chunk, "document_id", "")
+
+                # Zero cross-document leakage: source must match retrieved source
+                if img_source != target_source:
+                    continue
+                if target_doc_id and img_doc_id and img_doc_id != target_doc_id:
+                    continue
+
                 if not image_url or image_url in seen_img_urls:
                     continue
                 seen_img_urls.add(image_url)
+
                 relevant_images.append({
                     **image,
+                    "source": img_source,
+                    "document_id": img_doc_id,
+                    "page": image.get("page", chunk.page),
                     "relevance_score": round(retrieved_score + min(term_overlap, 10) * 0.001, 4),
                 })
 
