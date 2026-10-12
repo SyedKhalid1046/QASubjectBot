@@ -22,6 +22,7 @@ from embed_index import (
     add_chunks_to_index,
     reset_and_rebuild_index,
     VectorStoreIndex,
+    verify_index_sync,
 )
 from ingestion import (
     append_chunks_to_processed_file,
@@ -44,6 +45,18 @@ app.config["MAX_UPLOAD_FILES"] = 15
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 os.makedirs(app.config["INDEX_DIR"], exist_ok=True)
+
+
+def check_pipeline_index_sync():
+    """Startup/CI check that asserts len(processed_chunks.json) == len(metadata.json)
+    and that their source filenames match, failing loudly if not.
+    """
+    chunks_path = app.config.get("CHUNKS_PATH", os.path.join(PROJECT_ROOT, "data", "processed_chunks.json"))
+    index_dir = app.config.get("INDEX_DIR", os.path.join(PROJECT_ROOT, "data", "faiss_index"))
+    metadata_path = os.path.join(index_dir, "metadata.json")
+    if os.path.exists(chunks_path) or os.path.exists(metadata_path):
+        verify_index_sync(chunks_path=chunks_path, metadata_path=metadata_path, index_dir=index_dir)
+
 
 # In-memory thread-safe task registry for async uploads
 UPLOAD_TASKS: Dict[str, Dict[str, Any]] = {}
@@ -171,12 +184,34 @@ def _run_async_ingestion_task(
             message=f"Generating dense vectors & BM25 keywords for {len(all_new_chunks)} chunks...",
         )
 
-        if replace_mode:
-            save_processed_chunks(all_new_chunks, chunks_path=app.config["CHUNKS_PATH"])
-            reset_and_rebuild_index(all_new_chunks, index_dir=app.config["INDEX_DIR"])
-        else:
-            all_chunks = append_chunks_to_processed_file(all_new_chunks, chunks_path=app.config["CHUNKS_PATH"])
-            add_chunks_to_index(all_new_chunks, index_dir=app.config["INDEX_DIR"])
+        try:
+            if replace_mode:
+                reset_and_rebuild_index(
+                    all_new_chunks,
+                    index_dir=app.config["INDEX_DIR"],
+                    chunks_path=app.config["CHUNKS_PATH"],
+                )
+            else:
+                add_chunks_to_index(
+                    all_new_chunks,
+                    index_dir=app.config["INDEX_DIR"],
+                    chunks_path=app.config["CHUNKS_PATH"],
+                )
+            verify_index_sync(
+                chunks_path=app.config["CHUNKS_PATH"],
+                index_dir=app.config["INDEX_DIR"],
+            )
+        except Exception as embed_err:
+            print(f"[EMBEDDING ERROR] Failed during indexing step: {embed_err}")
+            update_task_progress(
+                task_id=task_id,
+                status="error",
+                progress_pct=100,
+                stage="error",
+                message=f"Text embedding / indexing failed: {str(embed_err)}",
+                error=str(embed_err),
+            )
+            return
 
         update_task_progress(
             task_id=task_id,
@@ -463,7 +498,11 @@ def list_documents():
     """Returns metadata and statistics for all currently indexed documents."""
     try:
         chunks_file = app.config.get("CHUNKS_PATH", "./data/processed_chunks.json")
-        if not os.path.exists(chunks_file):
+        index_dir = app.config.get("INDEX_DIR", "./data/faiss_index")
+        metadata_file = os.path.join(index_dir, "metadata.json")
+
+        target_file = chunks_file if os.path.exists(chunks_file) else metadata_file
+        if not os.path.exists(target_file):
             return jsonify({
                 "status": "success",
                 "total_documents": 0,
@@ -474,7 +513,7 @@ def list_documents():
                 "documents": [],
             })
 
-        chunks = load_processed_chunks(chunks_file)
+        chunks = load_processed_chunks(target_file)
         sources_map: Dict[str, Dict[str, Any]] = {}
 
         for c in chunks:
@@ -537,6 +576,7 @@ def list_documents():
 
 
 if __name__ == "__main__":
+    check_pipeline_index_sync()
     print("\n========================================================")
     print("      LAUNCHING QASUBJECTBOT FLASK WEB APPLICATION      ")
     print("      Access web UI at: http://127.0.0.1:5000           ")
