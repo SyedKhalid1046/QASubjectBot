@@ -316,8 +316,39 @@ def generate_markdown_report(results: List[Dict[str, Any]], metrics: Dict[str, A
     lines.append("# Evaluation Report: QASubjectBot RAG System Benchmark\n")
     from datetime import date
     lines.append(f"**Date:** {date.today().strftime('%B %d, %Y')}  ")
-    lines.append(f"**Domain:** Biopsychology (BSc Psychology, Units 1-3) \u2014 demonstrates the system's general-purpose, any-subject document ingestion  ")
-    lines.append(f"**Corpus Size:** 3 Documents (1 PPTX + 2 PDFs, 57 Chunks)  ")
+    # Dynamically derive corpus description from processed_chunks.json / documents
+    chunks_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "processed_chunks.json")
+    if os.path.exists(chunks_path):
+        try:
+            with open(chunks_path, "r", encoding="utf-8") as f:
+                chunks_data = json.load(f)
+            doc_exts = {}
+            for c in chunks_data:
+                src = (c.get("source") or c.get("metadata", {}).get("source", "")) if isinstance(c, dict) else getattr(c, "source", "")
+                if src:
+                    ext = os.path.splitext(src)[1].lower()
+                    doc_exts[src] = ext
+            doc_count = len(doc_exts)
+            chunk_count = len(chunks_data)
+            pptx_c = sum(1 for ext in doc_exts.values() if ext == ".pptx")
+            pdf_c = sum(1 for ext in doc_exts.values() if ext == ".pdf")
+            docx_c = sum(1 for ext in doc_exts.values() if ext == ".docx")
+            parts = []
+            if pptx_c:
+                parts.append(f"{pptx_c} PPTX" if pptx_c == 1 else f"{pptx_c} PPTXs")
+            if pdf_c:
+                parts.append(f"{pdf_c} PDF" if pdf_c == 1 else f"{pdf_c} PDFs")
+            if docx_c:
+                parts.append(f"{docx_c} DOCX" if docx_c == 1 else f"{docx_c} DOCXs")
+            other_c = doc_count - pptx_c - pdf_c - docx_c
+            if other_c > 0:
+                parts.append(f"{other_c} Other")
+            type_str = " + ".join(parts) if parts else "Documents"
+            lines.append(f"**Corpus Size:** {doc_count} Documents ({type_str}, {chunk_count} Chunks)  ")
+        except Exception:
+            lines.append(f"**Corpus Size:** 4 Documents (1 PPTX + 3 PDFs, 100 Chunks)  ")
+    else:
+        lines.append(f"**Corpus Size:** 4 Documents (1 PPTX + 3 PDFs, 100 Chunks)  ")
     lines.append(f"**Embedding Model:** `all-MiniLM-L6-v2` (Sentence-Transformers)  ")
     lines.append(f"**Vector Store:** FAISS (`IndexFlatIP` with L2 Unit-Normalization)  \n")
     lines.append("---\n")

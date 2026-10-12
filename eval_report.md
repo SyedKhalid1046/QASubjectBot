@@ -1,8 +1,7 @@
 # Evaluation Report: QASubjectBot RAG System Benchmark
 
-**Date:** September 29, 2026  
-**Domain:** Biopsychology (BSc Psychology, Units 1-3) — demonstrates the system's general-purpose, any-subject document ingestion  
-**Corpus Size:** 3 Documents (1 PPTX + 2 PDFs, 57 Chunks)  
+**Date:** October 12, 2026  
+**Corpus Size:** 4 Documents (1 PPTX + 3 PDFs, 100 Chunks)  
 **Embedding Model:** `all-MiniLM-L6-v2` (Sentence-Transformers)  
 **Vector Store:** FAISS (`IndexFlatIP` with L2 Unit-Normalization)  
 
@@ -18,6 +17,8 @@
 | **Out-of-Scope Refusal Rate** | **100.0%** (4/4) | 100.0% | PASS |
 | **Average In-Scope Confidence** | **0.9922** | > 0.35 | PASS |
 | **Average Out-of-Scope Confidence** | **0.1445** | < 0.20 | PASS |
+
+**Overall result:** 6 of 6 targets met (All benchmarks passing)
 
 ---
 

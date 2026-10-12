@@ -135,3 +135,17 @@ def test_convenience_wrapper():
     assert "answer" in res
     assert res["status"] in ["success", "insufficient_context"]
 
+
+def test_deep_learning_basics_retrieval_and_answering(rag_pipeline):
+    query = "What is a convolutional network primarily used for?"
+    res = rag_pipeline.answer_question(query, score_threshold=0.20)
+    assert res["status"] == "success"
+    assert any("Deep_Learning_Basics.pdf" in c["source"] for c in res["citations"])
+    assert "pattern" in res["answer"].lower() or "image" in res["answer"].lower()
+
+
+def test_pipeline_index_and_chunks_sync():
+    from embed_index import verify_index_sync, verify_post_ingestion_consistency
+    assert verify_index_sync() is True
+    assert verify_post_ingestion_consistency() is True
+

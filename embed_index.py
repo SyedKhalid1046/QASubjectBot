@@ -28,6 +28,7 @@ from ingestion import DocumentChunk, ingest_documents, load_processed_chunks
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CHUNKS_PATH = os.path.join(PROJECT_ROOT, "data", "processed_chunks.json")
 DEFAULT_INDEX_DIR = os.path.join(PROJECT_ROOT, "data", "faiss_index")
+DEFAULT_DOCUMENTS_DIR = os.path.join(PROJECT_ROOT, "documents")
 
 
 def tokenize_for_bm25(text: str) -> List[str]:
@@ -139,21 +140,41 @@ class VectorStoreIndex:
 
         print(f"[INDEX] Embedding {len(chunks)} chunks using dimension {self.embedding_engine.dimension}...")
         texts = [c.text for c in chunks]
-        embeddings = self.embedding_engine.embed_texts(texts)
+        try:
+            embeddings = self.embedding_engine.embed_texts(texts)
+        except Exception as embed_err:
+            sources = sorted(set(c.source for c in chunks))
+            print(f"[EMBEDDING ERROR] Failed to embed text chunks for {sources}: {embed_err}")
+            raise
 
-        # Initialize FAISS IndexFlatIP (Inner Product over unit vectors = Cosine Similarity)
-        self.index = faiss.IndexFlatIP(self.embedding_engine.dimension)
-        self.index.add(embeddings)
-        self.chunks = list(chunks)
+        try:
+            # Initialize FAISS IndexFlatIP (Inner Product over unit vectors = Cosine Similarity)
+            self.index = faiss.IndexFlatIP(self.embedding_engine.dimension)
+            self.index.add(embeddings)
+            self.chunks = list(chunks)
+        except Exception as faiss_err:
+            print(f"[FAISS ERROR] Failed to add embeddings to FAISS index: {faiss_err}")
+            raise
 
         # Build BM25 Index
-        self._rebuild_bm25()
+        try:
+            self._rebuild_bm25()
+        except Exception as bm25_err:
+            print(f"[BM25 ERROR] Failed to build BM25 index: {bm25_err}")
+            raise
 
         print(f"[INDEX] Successfully built FAISS Index ({self.index.ntotal} vectors) + BM25 Index.")
         return self
 
-    def save(self, index_dir: str = DEFAULT_INDEX_DIR):
-        """Saves FAISS index binary, associated chunk metadata, and BM25 state to disk."""
+    def save(
+        self,
+        index_dir: str = DEFAULT_INDEX_DIR,
+        chunks_path: Optional[str] = DEFAULT_CHUNKS_PATH,
+    ):
+        """Saves FAISS index binary, associated chunk metadata, and BM25 state to disk.
+        Atomically regenerates processed_chunks.json and metadata.json from the same chunk list
+        in the same function call so they can never diverge.
+        """
         if self.index is None or not self.chunks:
             raise ValueError("No index or chunks to save.")
 
@@ -166,9 +187,20 @@ class VectorStoreIndex:
         # Write FAISS binary index
         faiss.write_index(self.index, index_file)
 
-        # Write chunk metadata
+        # Single source of truth for both metadata.json and processed_chunks.json
+        serialized_chunks = [c.to_dict() for c in self.chunks]
+
+        # Write chunk metadata to index dir
         with open(metadata_file, "w", encoding="utf-8") as f:
-            json.dump([c.to_dict() for c in self.chunks], f, indent=2, ensure_ascii=False)
+            json.dump(serialized_chunks, f, indent=2, ensure_ascii=False)
+
+        # Write processed_chunks.json from the same chunk list
+        if chunks_path:
+            chunks_path = os.path.abspath(chunks_path)
+            os.makedirs(os.path.dirname(chunks_path), exist_ok=True)
+            with open(chunks_path, "w", encoding="utf-8") as f:
+                json.dump(serialized_chunks, f, indent=2, ensure_ascii=False)
+            print(f"[INDEX] Synchronized {len(self.chunks)} chunks to: {chunks_path}")
 
         print(f"[INDEX] Saved FAISS index and metadata to: {index_dir}")
 
@@ -208,16 +240,30 @@ class VectorStoreIndex:
             return
 
         texts = [c.text for c in new_chunks]
-        embeddings = self.embedding_engine.embed_texts(texts)
+        try:
+            embeddings = self.embedding_engine.embed_texts(texts)
+        except Exception as embed_err:
+            sources = sorted(set(c.source for c in new_chunks))
+            print(f"[EMBEDDING ERROR] Failed to embed new chunks for {sources}: {embed_err}")
+            raise
 
         if self.index is None:
             self.index = faiss.IndexFlatIP(self.embedding_engine.dimension)
 
-        self.index.add(embeddings)
-        self.chunks.extend(new_chunks)
+        try:
+            self.index.add(embeddings)
+            self.chunks.extend(new_chunks)
+        except Exception as faiss_err:
+            print(f"[FAISS ERROR] Failed to add new embeddings to FAISS index: {faiss_err}")
+            raise
 
         # Rebuild BM25 with all chunks
-        self._rebuild_bm25()
+        try:
+            self._rebuild_bm25()
+        except Exception as bm25_err:
+            print(f"[BM25 ERROR] Failed to rebuild BM25 index with new chunks: {bm25_err}")
+            raise
+
         print(f"[INDEX] Added {len(new_chunks)} new chunks. Total index vectors: {self.index.ntotal}")
 
     def search_dense(
@@ -336,12 +382,134 @@ class VectorStoreIndex:
         return self.search_dense(query, top_k=top_k)
 
 
+def verify_index_sync(
+    chunks_path: str = DEFAULT_CHUNKS_PATH,
+    metadata_path: Optional[str] = None,
+    index_dir: str = DEFAULT_INDEX_DIR,
+) -> bool:
+    """Startup/CI assertion check that asserts len(processed_chunks.json) == len(metadata.json)
+    and that their source filenames match, failing loudly if not.
+    """
+    if metadata_path is None:
+        metadata_path = os.path.join(index_dir, "metadata.json")
+
+    chunks_path = os.path.abspath(chunks_path)
+    metadata_path = os.path.abspath(metadata_path)
+
+    if not os.path.exists(chunks_path) and not os.path.exists(metadata_path):
+        print(f"[SYNC CHECK] Neither chunks file nor metadata exists yet ({chunks_path}).")
+        return True
+
+    if not os.path.exists(chunks_path):
+        raise AssertionError(
+            f"Index sync failed: chunks file missing at '{chunks_path}', "
+            f"while metadata exists at '{metadata_path}'."
+        )
+
+    if not os.path.exists(metadata_path):
+        raise AssertionError(
+            f"Index sync failed: metadata file missing at '{metadata_path}', "
+            f"while chunks file exists at '{chunks_path}'."
+        )
+
+    with open(chunks_path, "r", encoding="utf-8") as f:
+        chunks_data = json.load(f)
+
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        metadata_data = json.load(f)
+
+    len_chunks = len(chunks_data)
+    len_meta = len(metadata_data)
+    assert len_chunks == len_meta, (
+        f"Index sync failed: len(processed_chunks.json) ({len_chunks}) != len(metadata.json) ({len_meta}). "
+        f"The UI and FAISS index are out of sync!"
+    )
+
+    chunks_sources = sorted({
+        (c.get("source") or c.get("metadata", {}).get("source", "")) if isinstance(c, dict) else getattr(c, "source", "")
+        for c in chunks_data
+    })
+    meta_sources = sorted({
+        (c.get("source") or c.get("metadata", {}).get("source", "")) if isinstance(c, dict) else getattr(c, "source", "")
+        for c in metadata_data
+    })
+    assert chunks_sources == meta_sources, (
+        f"Index sync failed: source filenames do not match! "
+        f"processed_chunks.json: {chunks_sources} vs metadata.json: {meta_sources}"
+    )
+
+    chunks_ids = [
+        c.get("chunk_id") if isinstance(c, dict) else getattr(c, "chunk_id", "")
+        for c in chunks_data
+    ]
+    meta_ids = [
+        (c.get("chunk_id") or c.get("metadata", {}).get("chunk_id", "")) if isinstance(c, dict) else getattr(c, "chunk_id", "")
+        for c in metadata_data
+    ]
+    assert chunks_ids == meta_ids, (
+        f"Index sync failed: chunk_ids do not match between processed_chunks.json and metadata.json!"
+    )
+
+    print(f"[SYNC CHECK PASSED] Both files synchronized: {len_chunks} chunks across {len(chunks_sources)} source(s): {chunks_sources}")
+    return True
+
+
+def verify_post_ingestion_consistency(
+    docs_dir: str = DEFAULT_DOCUMENTS_DIR,
+    metadata_path: Optional[str] = None,
+    index_dir: str = DEFAULT_INDEX_DIR,
+) -> bool:
+    """Post-ingestion consistency check: asserts every supported document file in documents/
+    has at least one corresponding entry in metadata.json.
+    """
+    if metadata_path is None:
+        metadata_path = os.path.join(index_dir, "metadata.json")
+
+    docs_dir = os.path.abspath(docs_dir)
+    metadata_path = os.path.abspath(metadata_path)
+
+    if not os.path.exists(docs_dir):
+        return True
+
+    supported_extensions = {".pdf", ".docx", ".pptx", ".txt", ".md"}
+    doc_files = sorted([
+        f for f in os.listdir(docs_dir)
+        if os.path.splitext(f)[1].lower() in supported_extensions
+        and not f.startswith("~$")
+        and not f.startswith(".")
+    ])
+
+    if not doc_files:
+        return True
+
+    if not os.path.exists(metadata_path):
+        raise AssertionError(f"Post-ingestion check failed: metadata file not found at '{metadata_path}'.")
+
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        metadata_data = json.load(f)
+
+    indexed_sources = {
+        (c.get("source") or c.get("metadata", {}).get("source", "")) if isinstance(c, dict) else getattr(c, "source", "")
+        for c in metadata_data
+    }
+
+    missing_files = [f for f in doc_files if f not in indexed_sources]
+    assert not missing_files, (
+        f"Post-ingestion check failed: The following file(s) in '{docs_dir}' are missing from metadata.json: {missing_files}!"
+    )
+
+    print(f"[POST-INGESTION CHECK PASSED] All {len(doc_files)} document(s) in '{docs_dir}' represented in index: {doc_files}")
+    return True
+
+
 def build_and_save_index(
     chunks_path: str = DEFAULT_CHUNKS_PATH,
     index_dir: str = DEFAULT_INDEX_DIR,
     model_name: str = "all-MiniLM-L6-v2",
 ) -> VectorStoreIndex:
-    """End-to-end builder that loads chunks, generates embeddings, and saves the FAISS + BM25 index."""
+    """End-to-end builder that loads chunks, generates embeddings, and saves the FAISS + BM25 index.
+    Regenerates processed_chunks.json and metadata.json from the same chunk list atomically.
+    """
     chunks_path = os.path.abspath(chunks_path)
     if not os.path.exists(chunks_path):
         print(f"[INDEX] Processed chunks not found at '{chunks_path}'. Running ingestion...")
@@ -352,17 +520,23 @@ def build_and_save_index(
     engine = EmbeddingEngine(model_name=model_name)
     vector_store = VectorStoreIndex(engine)
     vector_store.build_from_chunks(chunks)
-    vector_store.save(index_dir)
+    vector_store.save(index_dir=index_dir, chunks_path=chunks_path)
+
+    verify_index_sync(chunks_path=chunks_path, index_dir=index_dir)
+    if os.path.abspath(index_dir) == os.path.abspath(DEFAULT_INDEX_DIR):
+        verify_post_ingestion_consistency(docs_dir=DEFAULT_DOCUMENTS_DIR, index_dir=index_dir)
+
     return vector_store
 
 
 def reset_and_rebuild_index(
     new_chunks: List[DocumentChunk],
     index_dir: str = DEFAULT_INDEX_DIR,
+    chunks_path: Optional[str] = DEFAULT_CHUNKS_PATH,
     model_name: str = "all-MiniLM-L6-v2",
 ) -> VectorStoreIndex:
     """Completely resets/clears the index directory and builds a fresh FAISS and BM25 index
-    from the provided chunks.
+    from the provided chunks, regenerating both metadata.json and processed_chunks.json together.
     """
     index_dir = os.path.abspath(index_dir)
     os.makedirs(index_dir, exist_ok=True)
@@ -379,29 +553,42 @@ def reset_and_rebuild_index(
     engine = EmbeddingEngine(model_name=model_name)
     store = VectorStoreIndex(engine)
     store.build_from_chunks(new_chunks)
-    store.save(index_dir)
+    store.save(index_dir=index_dir, chunks_path=chunks_path)
+
+    if chunks_path:
+        verify_index_sync(chunks_path=chunks_path, index_dir=index_dir)
+
     return store
 
 
 def add_chunks_to_index(
     new_chunks: List[DocumentChunk],
     index_dir: str = DEFAULT_INDEX_DIR,
+    chunks_path: Optional[str] = DEFAULT_CHUNKS_PATH,
     model_name: str = "all-MiniLM-L6-v2",
 ) -> VectorStoreIndex:
-    """Loads existing index, adds new chunks incrementally, and saves updated index back to disk."""
+    """Loads existing index, adds new chunks incrementally, and saves updated index back to disk,
+    updating both metadata.json and processed_chunks.json together.
+    """
     index_dir = os.path.abspath(index_dir)
     if not os.path.exists(os.path.join(index_dir, "index.faiss")):
         # If no index exists, build fresh
         engine = EmbeddingEngine(model_name=model_name)
         store = VectorStoreIndex(engine)
         store.build_from_chunks(new_chunks)
-        store.save(index_dir)
+        store.save(index_dir=index_dir, chunks_path=chunks_path)
+        if chunks_path:
+            verify_index_sync(chunks_path=chunks_path, index_dir=index_dir)
         return store
 
     engine = EmbeddingEngine(model_name=model_name)
     store = VectorStoreIndex.load(index_dir=index_dir, embedding_engine=engine)
     store.add_chunks(new_chunks)
-    store.save(index_dir)
+    store.save(index_dir=index_dir, chunks_path=chunks_path)
+
+    if chunks_path:
+        verify_index_sync(chunks_path=chunks_path, index_dir=index_dir)
+
     return store
 
 

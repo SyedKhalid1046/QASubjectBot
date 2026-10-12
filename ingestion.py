@@ -350,14 +350,18 @@ class MediaExtractor:
         target_dir = os.path.join(output_base_dir, doc_folder)
         os.makedirs(target_dir, exist_ok=True)
 
-        # Remove previously extracted images for this document to avoid stale artifacts
-        try:
-            for old_file in os.listdir(target_dir):
-                old_path = os.path.join(target_dir, old_file)
-                if os.path.isfile(old_path):
-                    os.remove(old_path)
-        except Exception as cleanup_error:
-            print(f"[MEDIA CLEANUP WARNING] {cleanup_error}")
+        # Remove previously extracted images for this document to avoid stale artifacts,
+        # but preserve existing extracted images for Deep_Learning_Basics as instructed.
+        if "deep_learning_basics" not in doc_folder.lower():
+            try:
+                for old_file in os.listdir(target_dir):
+                    old_path = os.path.join(target_dir, old_file)
+                    if os.path.isfile(old_path):
+                        os.remove(old_path)
+            except Exception as cleanup_error:
+                print(f"[MEDIA CLEANUP WARNING] {cleanup_error}")
+        else:
+            print(f"[MEDIA INFO] Preserving existing extracted images for '{doc_folder}' in '{target_dir}'")
 
         media_by_page: Dict[int, List[Dict[str, Any]]] = {}
 
@@ -1255,8 +1259,6 @@ def ingest_documents(
 
     for file_idx, filename in enumerate(files, 1):
         filepath = os.path.join(docs_dir, filename)
-        raw_pages = DocumentLoader.load(filepath, progress_callback=progress_callback)
-
         media_by_page = {}
         if extract_media:
             try:
@@ -1264,17 +1266,36 @@ def ingest_documents(
             except Exception as e:
                 print(f"[MEDIA WARNING] Media extraction failed for {filename}: {e}")
 
+        try:
+            raw_pages = DocumentLoader.load(filepath, progress_callback=progress_callback)
+        except Exception as load_err:
+            print(f"[INGESTION ERROR] Document text loading failed for '{filename}': {load_err}")
+            raw_pages = []
+
         cleaned_pages = []
         for page_num, raw_text in raw_pages:
             cleaned_text = cleaner.clean(raw_text)
             if cleaned_text:
                 cleaned_pages.append((page_num, cleaned_text))
 
-        doc_chunks = chunker.chunk_document_pages(
-            pages_cleaned=cleaned_pages,
-            source=filename,
-            media_by_page=media_by_page,
-        )
+        doc_chunks = []
+        try:
+            doc_chunks = chunker.chunk_document_pages(
+                pages_cleaned=cleaned_pages,
+                source=filename,
+                media_by_page=media_by_page,
+            )
+        except Exception as chunk_err:
+            print(f"[INGESTION ERROR] Document chunking failed for '{filename}': {chunk_err}")
+            doc_chunks = []
+
+        if media_by_page and not doc_chunks:
+            print(
+                f"[INGESTION ERROR] Document '{filename}' had images extracted successfully, "
+                f"but produced 0 text chunks! Document will not be searchable."
+            )
+        elif not doc_chunks:
+            print(f"[INGESTION WARNING] Document '{filename}' produced 0 text chunks.")
 
         all_chunks.extend(doc_chunks)
         total_tokens = sum(c.token_count for c in doc_chunks)
@@ -1283,6 +1304,11 @@ def ingest_documents(
             f"[{file_idx:02d}/{len(files):02d}] {filename:<45} | "
             f"Pages: {len(raw_pages):2d} | Chunks: {len(doc_chunks):2d} | Images: {img_count:2d} | Tokens: {total_tokens:5d}"
         )
+
+    ingested_sources = {c.source for c in all_chunks}
+    missing_docs = [f for f in files if f not in ingested_sources]
+    if missing_docs:
+        print(f"[POST-INGESTION WARNING] The following documents in '{docs_dir}' yielded 0 chunks: {missing_docs}")
 
     if output_path:
         out_abs = os.path.abspath(output_path)
@@ -1325,18 +1351,35 @@ def ingest_single_file(
         except Exception as e:
             print(f"[MEDIA WARNING] Media extraction failed for {filename}: {e}")
 
-    raw_pages = DocumentLoader.load(filepath, progress_callback=progress_callback)
+    try:
+        raw_pages = DocumentLoader.load(filepath, progress_callback=progress_callback)
+    except Exception as load_err:
+        print(f"[INGESTION ERROR] Document text loading failed for '{filename}': {load_err}")
+        raw_pages = []
+
     cleaned_pages = []
     for page_num, raw_text in raw_pages:
         cleaned_text = cleaner.clean(raw_text)
         if cleaned_text:
             cleaned_pages.append((page_num, cleaned_text))
 
-    chunks = chunker.chunk_document_pages(
-        pages_cleaned=cleaned_pages,
-        source=filename,
-        media_by_page=media_by_page,
-    )
+    chunks = []
+    try:
+        chunks = chunker.chunk_document_pages(
+            pages_cleaned=cleaned_pages,
+            source=filename,
+            media_by_page=media_by_page,
+        )
+    except Exception as chunk_err:
+        print(f"[INGESTION ERROR] Document chunking failed for '{filename}': {chunk_err}")
+        chunks = []
+
+    if media_by_page and not chunks:
+        print(
+            f"[INGESTION ERROR] Document '{filename}' had images extracted successfully, "
+            f"but produced 0 text chunks! Document will not be searchable."
+        )
+
     return chunks
 
 
